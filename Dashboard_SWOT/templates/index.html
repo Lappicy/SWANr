@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard SWOT</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+</head>
+<body>
+
+    <div class="aneel-header">
+        <div class="header-left">
+            <div class="app-icon"><span class="material-symbols-outlined" style="color:white;">cloud_download</span></div>
+            <span class="app-title">Download de dados <span class="app-subtitle">(Shapefile e NetCDF)</span></span>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <div class="aneel-panel" id="main-panel">
+        <div class="panel-header">
+            <div class="panel-title"><span class="material-symbols-outlined">manage_search</span> Consulta</div>
+            <div class="panel-controls"><span class="material-symbols-outlined btn-icon" onclick="togglePanel()">remove</span></div>
+        </div>
+
+        <div class="panel-tabs">
+            <div class="tab active" id="tab-filtros" onclick="switchTab('filtros')">Filtros</div>
+            <div class="tab" id="tab-camadas" onclick="switchTab('camadas')">Camadas</div>
+            <div class="tab disabled" id="tab-resultados" onclick="switchTab('resultados')">Resultados</div>
+        </div>
+
+        <div id="view-filtros" class="panel-body">
+            <form id="searchForm">
+                <label>1. Produto</label>
+                <select id="produto" name="produto" onchange="toggleFilters()">
+                    <option value="" disabled selected>Selecione...</option>
+                    <option value="RiverSP">SWOT_L2_HR_RiverSP</option>
+                    <option value="LakeSP">SWOT_L2_HR_LakeSP</option>
+                    <option value="PIXC">SWOT_L2_HR_PIXC</option>
+                    <option value="Raster">SWOT_L2_HR_Raster</option>
+                </select>
+
+                <div id="filters-container" class="hidden">
+                    <label style="color:#0079c1;">2. Recorte Regional (Brasil)</label>
+                    <select id="brazil_states" onchange="aplicarFiltroEstado()">
+                        <option value="">Personalizado (Desenhar no Mapa)</option>
+                        <option value="BR">BRASIL (Todo o Território)</option>
+                        <optgroup label="Região Centro-Oeste">
+                            <option value="DF">Distrito Federal</option><option value="GO">Goiás</option>
+                            <option value="MT">Mato Grosso</option><option value="MS">Mato Grosso do Sul</option>
+                        </optgroup>
+                        <optgroup label="Sudeste">
+                            <option value="SP">São Paulo</option><option value="RJ">Rio de Janeiro</option>
+                            <option value="MG">Minas Gerais</option><option value="ES">Espírito Santo</option>
+                        </optgroup>
+                        <optgroup label="Sul">
+                            <option value="PR">Paraná</option><option value="RS">Rio Grande do Sul</option>
+                            <option value="SC">Santa Catarina</option>
+                        </optgroup>
+                        <optgroup label="Nordeste">
+                            <option value="BA">Bahia</option><option value="PE">Pernambuco</option><option value="CE">Ceará</option>
+                            <option value="MA">Maranhão</option><option value="PB">Paraíba</option><option value="RN">Rio Grande do Norte</option>
+                            <option value="AL">Alagoas</option><option value="PI">Piauí</option><option value="SE">Sergipe</option>
+                        </optgroup>
+                        <optgroup label="Norte">
+                            <option value="AM">Amazonas</option><option value="PA">Pará</option><option value="RO">Rondônia</option>
+                            <option value="RR">Roraima</option><option value="AP">Amapá</option><option value="AC">Acre</option>
+                            <option value="TO">Tocantins</option>
+                        </optgroup>
+                    </select>
+
+                    <label>3. Período</label>
+                    <div class="coord-grid">
+                        <input type="date" name="start_date" id="start_date">
+                        <input type="date" name="end_date" id="end_date">
+                    </div>
+
+                    <div id="filters-RiverSP" class="hidden filter-group">
+                        <label>Subproduto</label>
+                        <select name="river_subproduct"><option value="Reach">Reach</option><option value="Node">Node</option></select>
+                        <label>Continente</label>
+                        <select name="river_continent"><option value="SA">América do Sul</option><option value="NA">América do Norte</option><option value="AF">África</option><option value="AS">Ásia</option><option value="EU">Europa</option><option value="OC">Oceania</option></select>
+                    </div>
+                    
+                    <div id="filters-LakeSP" class="hidden filter-group">
+                        <label>Subproduto</label>
+                        <select name="lake_subproduct"><option value="Prior">Prior</option><option value="Obs">Obs</option><option value="Unassigned">Unassigned</option><option value="Avg">Avg</option></select>
+                        <label>Continente</label>
+                        <select name="lake_continent"><option value="SA">América do Sul</option><option value="NA">América do Norte</option><option value="AF">África</option><option value="EU">Europa</option></select>
+                    </div>
+
+                    <div id="filters-Raster" class="hidden filter-group">
+                        <label>Resolução</label>
+                        <select name="raster_resolution"><option value="100m">100m</option><option value="250m">250m</option></select>
+                    </div>
+
+                    <div id="orbit-filters" class="hidden filter-group">
+                        <label>Identificação (Opcional)</label>
+                        <div class="grid-3">
+                            <input type="number" name="cycle" placeholder="Cycle">
+                            <input type="number" name="pass" placeholder="Pass">
+                            <input type="text" name="tile" placeholder="Tile">
+                        </div>
+                    </div>
+
+                    <div id="aoi-section" class="hidden filter-group">
+                        <label id="label-aoi">4. Área de Interesse</label>
+                        <p style="font-size:0.8rem; margin-top:0">Use "Recorte Regional" ou desenhe <span style="font-weight:bold">□</span> no mapa.</p>
+                        <div class="coord-grid small-inputs">
+                            <input type="number" step="any" id="lat_min" name="lat_min" placeholder="Lat Min" readonly>
+                            <input type="number" step="any" id="lat_max" name="lat_max" placeholder="Lat Max" readonly>
+                            <input type="number" step="any" id="lon_min" name="lon_min" placeholder="Lon Min" readonly>
+                            <input type="number" step="any" id="lon_max" name="lon_max" placeholder="Lon Max" readonly>
+                        </div>
+                    </div>
+                </div>
+            </form>
+            <div id="btn-container" class="hidden" style="margin-top:20px;">
+                <button type="button" class="btn-aneel" onclick="buscarDados()">Consultar</button>
+            </div>
+        </div>
+
+        <div id="view-camadas" class="panel-body hidden">
+            <p style="font-size:0.85rem; color:#666; margin-bottom:15px; margin-top:0;">Ative as camadas abaixo para visualizar no mapa.</p>
+            
+            <h3 class="section-title" style="margin-top:0;">Limites Territoriais</h3>
+            <div class="layer-item">
+                <label class="switch">
+                    <input type="checkbox" onchange="toggleCamada(this, 'limites_BR', '🗺️ Limites do Brasil', '#000000', 'linha')">
+                    <span class="slider round"></span>
+                </label>
+                <span class="layer-label">Limites do Brasil</span>
+            </div>
+
+            <h3 class="section-title" style="margin-top:20px;">Dados de Referência (ANA)</h3>
+            <div class="layer-list">
+                <div class="layer-item">
+                    <label class="switch">
+                        <input type="checkbox" onchange="toggleCamada(this, 'Estacoes_hidrometeorologicas_ANA', '💧 Estações Hidrometeorológicas', '#0099FF', 'ponto')">
+                        <span class="slider round"></span>
+                    </label>
+                    <span class="layer-label">Estações Hidrometeorológicas</span>
+                </div>
+                <div class="layer-item">
+                    <label class="switch">
+                        <input type="checkbox" onchange="toggleCamada(this, 'SNIRH_OttobaciaNv1', '🌊 Ottobacias Nível 1', '#FFD700', 'linha')">
+                        <span class="slider round"></span>
+                    </label>
+                    <span class="layer-label">Ottobacias (Nível 1)</span>
+                </div>
+
+                <h3 class="section-title" style="margin-top:20px;">Dados do Satélite</h3>
+                <div class="layer-item">
+                    <label class="switch">
+                        <input type="checkbox" onchange="toggleCamada(this, 'SWOT_orbits_BR', '🛰️ Órbitas SWOT', '#FF0000', 'linha')">
+                        <span class="slider round"></span>
+                    </label>
+                    <span class="layer-label">Órbitas SWOT (Passes)</span>
+                </div>
+                <div class="layer-item">
+                    <label class="switch">
+                        <input type="checkbox" onchange="toggleCamada(this, 'SWOT_tiles_BR', '🔷 Grades SWOT', '#00FFFF', 'linha')">
+                        <span class="slider round"></span>
+                    </label>
+                    <span class="layer-label">Grades SWOT (Tiles)</span>
+                </div>
+            </div>
+        </div>
+
+        <div id="view-resultados" class="panel-body hidden">
+            <div id="results-meta" class="hidden">
+                <div class="results-summary">
+                    <span id="total-count">0 arquivos</span> <span style="color:#ccc;">•</span> <span id="total-size">0 MB</span>
+                </div>
+                <div class="results-toolbar">
+                    <label class="select-all-label"><input type="checkbox" id="select-all" onclick="toggleSelectAll()"> Selecionar Todos</label>
+                </div>
+            </div>
+            <div id="results-list" class="results-list"></div>
+            <div id="progress-container" class="hidden" style="padding:10px;">
+                <div class="progress-bar-bg"><div id="progress-fill" style="width:0%"></div></div>
+                <div style="text-align:center; font-size:0.8rem; margin-top:5px;" id="progress-text">Iniciando...</div>
+            </div>
+            <button type="button" class="btn-aneel download" onclick="baixarSelecionados()" disabled>
+                <span class="material-symbols-outlined">download</span> Baixar Selecionados
+            </button>
+            <button type="button" class="btn-text" onclick="switchTab('filtros')">« Voltar aos Filtros</button>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
