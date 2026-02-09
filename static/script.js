@@ -198,11 +198,9 @@ function buscarDados() {
             return; 
         }
         
-        // CALCULO DO TOTAL DE MB
         let totalBytes = 0;
         d.results.forEach(f => {
             if (f.size && f.size !== "N/A") {
-                // Remove " MB" e converte
                 totalBytes += parseFloat(f.size);
             }
         });
@@ -212,7 +210,6 @@ function buscarDados() {
         document.getElementById('results-meta').classList.remove('hidden');
         if(btnDown) btnDown.classList.remove('hidden');
         
-        // Reseta checkbox "Selecionar Todos"
         const selectAll = document.getElementById('select-all');
         if(selectAll) selectAll.checked = false;
         
@@ -241,7 +238,7 @@ function buscarDados() {
                     <input type="checkbox" value="${f.download_link}" onclick="verificarSelecao()"> 
                     <div class="result-text">
                         <div class="result-filename" title="${f.filename}">${f.filename}</div>
-                        <div class="result-size">${f.size}</div>
+                        <div class="result-size">${f.size} MB</div>
                     </div>
                 </div>
                 <button class="btn-text btn-action" style="${corBotao}" ${acaoBotao}>${textoBotao}</button>
@@ -309,13 +306,19 @@ async function baixarRecortado(url) {
     const shape = document.getElementById('uploadedShapeName').value;
     let btn = event ? event.target : null;
     let txtOriginal = "";
-    if(btn && btn.tagName === 'BUTTON') { txtOriginal = btn.innerText; btn.innerText = "⏳"; btn.disabled=true; }
+    
+    if(btn && btn.tagName === 'BUTTON') {
+        txtOriginal = btn.innerText;
+        btn.innerText = "⏳"; 
+        btn.disabled = true;
+    }
 
     try {
         const r = await fetch('/download_cropped', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({granule_url: url, shape_filename: shape})
         });
+        
         if(r.ok) {
             const blob = await r.blob();
             const a = document.createElement('a');
@@ -328,8 +331,33 @@ async function baixarRecortado(url) {
             if(btn) btn.innerText = "✅";
         } else {
             const err = await r.json(); 
-            if(btn) { alert("Erro: " + err.error); btn.innerText = "❌"; }
+            const msg = err.error || "Erro desconhecido";
+            if(btn) { 
+                alert("Erro ao recortar: " + msg); 
+                btn.innerText = "❌"; 
+            }
         }
-    } catch(e) { if(btn) { alert("Erro conexão"); btn.innerText = "❌"; } }
-    finally { if(btn) setTimeout(()=> { btn.innerText=txtOriginal; btn.disabled=false; }, 3000); }
+    } catch(e) { 
+        if(btn) { 
+            alert("Erro de conexão com o servidor."); 
+            btn.innerText = "❌"; 
+        } 
+    } finally { 
+        if(btn) setTimeout(()=> { btn.innerText=txtOriginal; btn.disabled=false; }, 3000); 
+    }
+}
+
+// =========================================
+//  LÓGICA DO POP-UP (MODAL)
+// =========================================
+
+function toggleModalButton() {
+    const check = document.getElementById('check-terms');
+    const btn = document.getElementById('btn-modal-ok');
+    btn.disabled = !check.checked;
+}
+
+function closeModal() {
+    const modal = document.getElementById('intro-modal');
+    modal.classList.add('hidden');
 }

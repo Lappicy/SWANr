@@ -12,6 +12,30 @@
 </head>
 <body>
 
+    <div id="intro-modal" class="modal-overlay">
+        <div class="modal-content">
+            <p class="modal-header-text">Prezado(a) usuário(a), agradecemos a utilização da ferramenta Dashboard SWOT.</p>
+            
+            <div class="modal-body-text">
+                <p>As informações fornecidas nesta página devem ser usadas para fins de referência e análise preliminar. Esta é uma ferramenta em <strong>constante desenvolvimento</strong>.</p>
+                
+                <p>A precisão dos dados depende da disponibilidade dos serviços da NASA e do processamento dos pacotes geoespaciais. O desenvolvedor não se responsabiliza por eventuais inconsistências momentâneas nos serviços externos.</p>
+                
+                <p>Caso encontre inconsistências, bugs ou problemas, por favor, trate diretamente através do e-mail: <br> 
+                <a href="mailto:joaquim.ajr@outlook.com" style="color: #0079c1; font-weight: bold;">joaquim.ajr@outlook.com</a></p>
+                
+                <p style="margin-top: 15px; font-weight: 600;">Aproveite o Dashboard SWOT e compartilhe!</p>
+            </div>
+
+            <div class="modal-footer">
+                <label class="modal-checkbox">
+                    <input type="checkbox" id="check-terms" onchange="toggleModalButton()">
+                    Eu concordo com os termos e condições acima
+                </label>
+                <button id="btn-modal-ok" class="btn-modal" onclick="closeModal()" disabled>Ok</button>
+            </div>
+        </div>
+    </div>
     <div class="aneel-header">
         <div class="header-left">
             <div class="app-icon"><span class="material-symbols-outlined" style="color:white;">cloud_download</span></div>
@@ -161,9 +185,11 @@
 
         <div id="view-referencias" class="panel-body hidden">
             <h3 class="section-title">Referências Bibliográficas</h3>
-            <p style="font-size:0.9rem; color:#666; text-align:center; margin-top:20px;">
-                (Seção vazia conforme solicitado)
-            </p>
+            <div style="text-align: center; margin-top: 50px; color: #666;">
+                <span class="material-symbols-outlined" style="font-size: 48px; color: #f39c12; margin-bottom: 10px;">engineering</span>
+                <p style="font-size: 1.1rem; font-weight: 500; margin: 0;">Estamos em construção</p>
+                <p style="font-size: 0.85rem; margin-top: 5px;">Em breve esta seção será atualizada.</p>
+            </div>
         </div>
 
         <div id="view-resultados" class="panel-body hidden" style="position: relative; display: flex; flex-direction: column;">
