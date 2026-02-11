@@ -9,3 +9,4 @@ requests
 rioxarray
 xarray
 netCDF4
+python-dotenv
