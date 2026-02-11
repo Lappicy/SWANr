@@ -194,7 +194,7 @@ function toggleCamada(checkbox, nomeArquivo, nomeExibicao, cor, tipo) {
 }
 
 // ==========================================
-// FUNÇÕES DE BUSCA E RESULTADOS ATUALIZADAS
+// FUNÇÕES DE BUSCA E RESULTADOS
 // ==========================================
 function buscarDados() {
     const p = document.getElementById('produto').value;
