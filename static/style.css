@@ -2,116 +2,53 @@
    1. ESTILOS GERAIS E LAYOUT
    ========================================= */
 body, html {
-    margin: 0;
-    padding: 0;
-    height: 100%;
+    margin: 0; padding: 0; height: 100%;
     font-family: 'Segoe UI', sans-serif;
-    background: #ddd;
-    overflow: hidden;
+    background: #ddd; overflow: hidden;
 }
 
-/* Header Flutuante */
 .aneel-header {
-    position: absolute;
-    top: 20px;
-    left: 20px;
-    height: 50px;
-    background-color: #3a444e;
-    border-radius: 30px;
-    display: flex;
-    align-items: center;
-    padding: 0 15px 0 5px;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.4);
-    z-index: 2000;
-    color: white;
-    max-width: 90%;
+    position: absolute; top: 20px; left: 20px; height: 50px;
+    background-color: #3a444e; border-radius: 30px;
+    display: flex; align-items: center; padding: 0 15px 0 5px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.4); z-index: 2000; color: white;
 }
-
 .header-left { display: flex; align-items: center; gap: 12px; }
 .app-icon {
-    background-color: #3498db;
-    border-radius: 50%;
-    width: 40px;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: 2px solid white;
+    background-color: #3498db; border-radius: 50%; width: 40px; height: 40px;
+    display: flex; align-items: center; justify-content: center; border: 2px solid white;
 }
 .app-title { font-size: 1.1rem; font-weight: 700; white-space: nowrap; }
 .app-subtitle { font-weight: 300; font-size: 0.85rem; opacity: 0.8; margin-left: 5px; }
 
-/* Mapa */
-#map {
-    height: 100vh;
-    width: 100%;
-    position: absolute;
-    top: 0;
-    left: 0;
-    z-index: 0;
-}
+#map { height: 100vh; width: 100%; position: absolute; top: 0; left: 0; z-index: 0; }
 .map-loading, .map-loading * { cursor: wait !important; }
 
 /* =========================================
    2. PAINEL LATERAL
    ========================================= */
 .aneel-panel {
-    position: absolute;
-    top: 90px;
-    left: 20px;
-    width: 340px;
-    background: white;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-    border-radius: 4px;
-    z-index: 1500;
-    display: flex;
-    flex-direction: column;
-    max-height: 85vh;
-    transition: height 0.3s ease;
+    position: absolute; top: 90px; left: 20px; width: 340px;
+    background: white; box-shadow: 0 4px 15px rgba(0,0,0,0.3); border-radius: 4px;
+    z-index: 1500; display: flex; flex-direction: column; max-height: 85vh;
 }
-
 .panel-header {
-    background-color: #555;
-    color: white;
-    padding: 10px 15px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-radius: 4px 4px 0 0;
+    background-color: #555; color: white; padding: 10px 15px;
+    display: flex; justify-content: space-between; align-items: center; border-radius: 4px 4px 0 0;
 }
 .panel-title { font-weight: bold; display: flex; align-items: center; gap: 8px; font-size: 1rem; }
 .btn-icon { cursor: pointer; font-size: 1.2rem; opacity: 0.8; }
 
 .panel-tabs { display: flex; background: #f0f0f0; border-bottom: 1px solid #ccc; }
-.tab {
-    flex: 1;
-    text-align: center;
-    padding: 10px;
-    font-size: 0.9rem;
-    color: #666;
-    cursor: pointer;
-    border-bottom: 3px solid transparent;
-}
+.tab { flex: 1; text-align: center; padding: 10px; font-size: 0.9rem; color: #666; cursor: pointer; border-bottom: 3px solid transparent; }
 .tab.active { background: white; color: #333; font-weight: bold; border-bottom: 3px solid #333; }
 .tab.disabled { color: #aaa; pointer-events: none; }
 
-.panel-body {
-    padding: 15px;
-    overflow-y: auto;
-    flex-grow: 1;
-    display: flex;
-    flex-direction: column;
-}
+.panel-body { padding: 15px; overflow-y: auto; flex-grow: 1; display: flex; flex-direction: column; }
 
 label { display: block; font-weight: 600; font-size: 0.85rem; margin-top: 10px; color: #444; }
 select, input[type="text"], input[type="number"], input[type="date"], input[type="file"] {
-    width: 100%;
-    padding: 8px;
-    margin-top: 4px;
-    border: 1px solid #ccc;
-    border-radius: 3px;
-    box-sizing: border-box;
-    font-size: 0.85rem;
+    width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 3px; font-size: 0.85rem; box-sizing: border-box;
 }
 
 .coord-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -119,111 +56,37 @@ select, input[type="text"], input[type="number"], input[type="date"], input[type
 .small-inputs input { font-size: 0.8rem; background: #f9f9f9; }
 
 .btn-aneel {
-    background-color: #0079c1;
-    color: white;
-    border: none;
-    padding: 10px;
-    width: 100%;
-    border-radius: 4px;
-    font-weight: bold;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 5px;
+    background-color: #0079c1; color: white; border: none; padding: 10px; width: 100%;
+    border-radius: 4px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px;
 }
 .btn-aneel:hover { background-color: #005a91; }
 .btn-aneel:disabled { background-color: #ccc; cursor: not-allowed; }
 
-.btn-text {
-    background: none;
-    border: none;
-    color: #0079c1;
-    cursor: pointer;
-    margin-top: 10px;
-    font-size: 0.85rem;
-    text-decoration: underline;
-    display: inline-block;
-}
+.btn-text { background: none; border: none; color: #0079c1; cursor: pointer; margin-top: 10px; font-size: 0.85rem; text-decoration: underline; }
 
-.upload-container {
-    border: 2px dashed #ccc;
-    padding: 10px;
-    text-align: center;
-    background: #fafafa;
-    border-radius: 4px;
-}
+.upload-container { border: 2px dashed #ccc; padding: 10px; text-align: center; background: #fafafa; border-radius: 4px; }
 .upload-container:hover { border-color: #0079c1; background: #f0f7ff; }
 
-.sub-opts {
-    background-color: #f8f9fa;
-    border: 1px solid #e9ecef;
-    border-top: none;
-    padding: 10px;
-    margin-bottom: 10px;
-    border-radius: 0 0 4px 4px;
-}
+.sub-opts { background-color: #f8f9fa; border: 1px solid #e9ecef; border-top: none; padding: 10px; margin-bottom: 10px; border-radius: 0 0 4px 4px; }
 .sub-label { font-size: 0.75rem; color: #666; margin-top: 5px; }
-.sub-select { font-size: 0.85rem; padding: 4px; margin-bottom: 5px; }
 
 .aoi-tabs { border: 1px solid #ddd; padding: 10px; border-radius: 4px; background: #fff; }
 .filter-block { margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
 .hidden { display: none !important; }
 
-.date-warning {
-    background-color: #fff3cd;
-    color: #856404;
-    border: 1px solid #ffeeba;
-    padding: 8px;
-    border-radius: 4px;
-    margin-bottom: 8px;
-    font-size: 0.8rem;
-    text-align: center;
-}
+.date-warning { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; padding: 8px; border-radius: 4px; margin-bottom: 8px; font-size: 0.8rem; text-align: center; }
 
 /* =========================================
    3. SWITCH / BOTÕES LIGA/DESLIGA
    ========================================= */
-.layer-item {
-    display: flex;
-    align-items: center;
-    padding: 8px 0;
-    border-bottom: 1px dotted #eee;
-}
+.layer-item { display: flex; align-items: center; padding: 8px 0; border-bottom: 1px dotted #eee; }
 .layer-label { margin-left: 12px; font-size: 0.9rem; color: #444; }
 .section-title { font-size: 1.1rem; color: #333; margin-top: 20px; border-bottom: 1px solid #eee; margin-bottom: 10px; }
 
-.switch {
-    position: relative;
-    display: inline-block;
-    width: 40px;
-    height: 20px;
-    flex-shrink: 0;
-    margin-right: 5px;
-}
+.switch { position: relative; display: inline-block; width: 40px; height: 20px; flex-shrink: 0; margin-right: 5px; }
 .switch input { opacity: 0; width: 0; height: 0; }
-.slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: #ccc;
-    transition: .4s;
-    border-radius: 20px;
-}
-.slider:before {
-    position: absolute;
-    content: "";
-    height: 16px;
-    width: 16px;
-    left: 2px;
-    bottom: 2px;
-    background-color: white;
-    transition: .4s;
-    border-radius: 50%;
-}
+.slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px; }
+.slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 2px; bottom: 2px; background-color: white; transition: .4s; border-radius: 50%; }
 input:checked + .slider { background-color: #0079c1; }
 input:focus + .slider { box-shadow: 0 0 1px #0079c1; }
 input:checked + .slider:before { transform: translateX(20px); }
@@ -231,163 +94,54 @@ input:checked + .slider:before { transform: translateX(20px); }
 /* =========================================
    4. LOADER E RESULTADOS
    ========================================= */
-.results-meta { padding: 0; }
-.results-summary {
-    text-align: center;
-    background: #f8f9fa;
-    padding: 8px;
-    border-bottom: 1px solid #eee;
-    font-size: 0.9rem;
-    color: #333;
-    font-weight: 600;
-}
-.results-toolbar {
-    padding: 8px 10px;
-    border-bottom: 1px solid #eee;
-    background: #fafafa;
-    display: flex;
-    align-items: center;
-}
-.loading-overlay {
-    position: absolute; 
-    top: 0; left: 0; 
-    width: 100%; height: 100%;
-    background: white; 
-    z-index: 10;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-}
-.loader-content { text-align: center; margin-bottom: 20px; }
-.loader-spinner {
-    border: 5px solid #f3f3f3;
-    border-top: 5px solid #0079c1;
-    border-radius: 50%;
-    width: 40px; height: 40px;
-    animation: spin 1s linear infinite;
-    margin: 0 auto;
-}
+.results-summary { text-align: center; background: #f8f9fa; padding: 8px; border-bottom: 1px solid #eee; font-size: 0.9rem; color: #333; font-weight: 600; }
+.results-toolbar { padding: 8px 10px; border-bottom: 1px solid #eee; background: #fafafa; display: flex; align-items: center; }
+.loading-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: white; z-index: 10; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+.loader-spinner { border: 5px solid #f3f3f3; border-top: 5px solid #0079c1; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto; }
 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-.progress-bar-bg {
-    position: absolute;
-    bottom: 0; left: 0;
-    width: 100%; height: 6px;
-    background: #e0e0e0;
-}
-#progress-fill {
-    height: 100%;
-    background-color: #0079c1;
-    width: 0%;
-}
+.progress-bar-bg { position: absolute; bottom: 0; left: 0; width: 100%; height: 6px; background: #e0e0e0; }
+#progress-fill { height: 100%; background-color: #0079c1; width: 0%; }
 .progress-filling { animation: fillSim 4s ease-out forwards; }
-@keyframes fillSim {
-    0% { width: 0%; } 20% { width: 15%; } 50% { width: 45%; } 80% { width: 85%; } 100% { width: 95%; } 
-}
-.results-list {
-    border: 1px solid #eee;
-    flex-grow: 1;
-    overflow-y: auto;
-    position: relative;
-    background: #fff;
-}
-.result-item {
-    padding: 8px;
-    border-bottom: 1px solid #eee;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.8rem;
-}
-.result-info {
-    flex-grow: 1;
-    margin-right: 10px;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-}
+@keyframes fillSim { 0% { width: 0%; } 20% { width: 15%; } 50% { width: 45%; } 80% { width: 85%; } 100% { width: 95%; } }
+
+.results-list { border: 1px solid #eee; flex-grow: 1; overflow-y: auto; position: relative; background: #fff; }
+.result-item { padding: 8px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; }
+.result-info { flex-grow: 1; margin-right: 10px; min-width: 0; display: flex; align-items: center; }
 .result-info input[type="checkbox"] { margin-right: 10px; width: auto; }
 .result-text { min-width: 0; }
 .result-filename { font-weight: 600; word-break: break-all; }
 .result-size { color: #28a745; font-size: 0.75rem; }
-.btn-action {
-    white-space: nowrap;
-    flex-shrink: 0;
-    margin-top: 0 !important;
-    font-size: 0.75rem;
-    padding: 5px;
-    border: 1px solid #eee;
-    border-radius: 3px;
-    background: white;
-}
-.btn-action:hover { background-color: #f0f0f0; }
 
 /* =========================================
    5. POP-UP / MODAL DE AVISO (AMARELO)
    ========================================= */
-.modal-overlay {
-    position: fixed;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    background-color: rgba(0, 0, 0, 0.6);
-    z-index: 9999;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-}
-.modal-content {
-    background-color: #fffbe6; /* Amarelo suave */
-    width: 90%;
-    max-width: 600px;
-    padding: 25px;
-    border-radius: 4px;
-    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-    font-family: 'Segoe UI', sans-serif;
-    color: #333;
-    animation: fadeIn 0.3s ease-out;
-}
+.modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.6); z-index: 9999; display: flex; justify-content: center; align-items: center; }
+.modal-content { background-color: #fffbe6; width: 90%; max-width: 600px; padding: 25px; border-radius: 4px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); color: #333; animation: fadeIn 0.3s ease-out; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
-
-.modal-header-text {
-    font-size: 1rem;
-    font-weight: 600;
-    margin-top: 0; margin-bottom: 15px;
-}
-.modal-body-text p {
-    font-size: 0.9rem;
-    line-height: 1.5;
-    margin-bottom: 10px;
-    text-align: justify;
-}
-.modal-footer {
-    margin-top: 20px;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 15px;
-    border-top: 1px solid #e0d8b0;
-    padding-top: 15px;
-}
-.modal-checkbox {
-    font-size: 0.85rem;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    cursor: pointer;
-}
-.btn-modal {
-    padding: 8px 25px;
-    background-color: #8c9eff;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    font-weight: bold;
-    cursor: pointer;
-    transition: background 0.3s;
-}
+.modal-header-text { font-size: 1rem; font-weight: 600; margin-top: 0; margin-bottom: 15px; }
+.modal-body-text p { font-size: 0.9rem; line-height: 1.5; margin-bottom: 10px; text-align: justify; }
+.modal-footer { margin-top: 20px; display: flex; flex-direction: column; align-items: flex-end; gap: 15px; border-top: 1px solid #e0d8b0; padding-top: 15px; }
+.modal-checkbox { font-size: 0.85rem; display: flex; align-items: center; gap: 8px; width: 100%; cursor: pointer; }
+.btn-modal { padding: 8px 25px; background-color: #8c9eff; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; transition: background 0.3s; }
 .btn-modal:hover { background-color: #5c6bc0; }
-.btn-modal:disabled {
-    background-color: #ccc;
-    cursor: not-allowed;
+.btn-modal:disabled { background-color: #ccc; cursor: not-allowed; }
+
+/* =========================================
+   6. POP-UP DO MAPA (LEAFLET - ATRIBUTOS)
+   ========================================= */
+.custom-popup-wrapper {
+    max-height: 50vh; overflow-y: auto; padding-right: 8px;
 }
+.custom-popup-wrapper::-webkit-scrollbar { width: 6px; }
+.custom-popup-wrapper::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+.custom-popup-wrapper::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+.custom-popup-wrapper::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
+
+.custom-popup-header {
+    font-weight: 700; font-size: 1.05rem; color: #0079c1; margin-bottom: 8px; padding-bottom: 8px;
+    border-bottom: 2px solid #eee; position: sticky; top: 0; background: white; z-index: 10;
+}
+.custom-popup-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.custom-popup-table td { padding: 5px 4px; border-bottom: 1px solid #f9f9f9; vertical-align: top; }
+.custom-popup-key { font-weight: 600; color: #555; width: 45%; word-break: break-word; }
+.custom-popup-value { color: #222; word-break: break-word; }

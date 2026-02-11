@@ -44,6 +44,7 @@ function togglePanel() {
     else { b.style.display = 'flex'; p.style.removeProperty('height'); }
 }
 
+// VALIDAÇÃO DEFENSIVA DE DATAS (NOVO)
 function validarDatas() {
     const s = document.getElementById('start_date');
     const e = document.getElementById('end_date');
@@ -55,10 +56,27 @@ function validarDatas() {
     let d2 = e.value ? new Date(e.value+'T00:00:00') : null;
 
     msg.classList.add('hidden');
+    msg.style.color = "#856404"; 
+    msg.style.backgroundColor = "#fff3cd";
+    msg.style.borderColor = "#ffeeba";
+
+    // Impede datas antes do lançamento
     if ((d1 && d1 < min) || (d2 && d2 < min)) {
         alert("O satélite não estava lançado/disponível antes de 15/02/2022.");
         if(d1<min) s.value=""; if(d2<min) e.value=""; return;
     }
+
+    // Previne datas invertidas
+    if (d1 && d2 && d1 > d2) {
+        msg.innerHTML = "❌ <strong>Erro:</strong> A data está invertida. A data inicial não pode ser maior que a final.";
+        msg.style.color = "#721c24";
+        msg.style.backgroundColor = "#f8d7da";
+        msg.style.borderColor = "#f5c6cb";
+        msg.classList.remove('hidden');
+        e.value = ""; 
+        return;
+    }
+
     if ((d1 && d1 <= calValEnd) || (d2 && d2 <= calValEnd)) {
         msg.innerText = "⚠️ Esse período engloba a fase de Cal/Val.";
         msg.classList.remove('hidden');
@@ -148,15 +166,26 @@ function toggleCamada(checkbox, nomeArquivo, nomeExibicao, cor, tipo) {
     }
     if (activeLayers[nomeArquivo]) { map.addLayer(activeLayers[nomeArquivo]); return; }
     startLoading(); checkbox.disabled = true;
+    
     fetch(`/camadas/${nomeArquivo}`).then(r => r.json()).then(data => {
         var layer = L.geoJSON(data, {
             style: function (f) { return { color: cor, weight: 3, opacity: 0.8, fillOpacity: 0.1 }; },
             pointToLayer: function (f, latlng) { return L.circleMarker(latlng, { radius: 5, fillColor: cor, color: "#fff", weight: 1, opacity: 1, fillOpacity: 0.9 }); },
+            
             onEachFeature: function (f, layer) {
                 if (f.properties) {
-                    let html = `<div class="custom-popup-header">${nomeExibicao}</div><table class="custom-popup-table">`;
-                    for (const [key, value] of Object.entries(f.properties)) html += `<tr><td class="custom-popup-key">${key}</td><td class="custom-popup-value">${value}</td></tr>`;
-                    html += `</table>`; layer.bindPopup(html);
+                    let html = `<div class="custom-popup-wrapper">
+                                    <div class="custom-popup-header">${nomeExibicao}</div>
+                                    <table class="custom-popup-table">`;
+                                    
+                    for (const [key, value] of Object.entries(f.properties)) {
+                        let valDisplay = (value === null || value === '') ? '-' : value;
+                        html += `<tr><td class="custom-popup-key">${key}</td><td class="custom-popup-value">${valDisplay}</td></tr>`;
+                    }
+                    html += `</table></div>`;
+                    
+                    let alturaMax = window.innerHeight * 0.6;
+                    layer.bindPopup(html, { maxHeight: alturaMax, maxWidth: 300 });
                 }
             }
         });
@@ -164,9 +193,24 @@ function toggleCamada(checkbox, nomeArquivo, nomeExibicao, cor, tipo) {
     }).catch(e => { alert("Erro camada."); checkbox.checked = false; checkbox.disabled = false; stopLoading(); });
 }
 
+// ==========================================
+// FUNÇÕES DE BUSCA E RESULTADOS ATUALIZADAS
+// ==========================================
 function buscarDados() {
     const p = document.getElementById('produto').value;
-    if(!p) { alert("Selecione um produto"); return; }
+    if(!p) { alert("Selecione um produto antes de consultar."); return; }
+    
+    const sDate = document.getElementById('start_date').value;
+    const eDate = document.getElementById('end_date').value;
+    
+    if(!sDate || !eDate) {
+        alert("Por favor, preencha a Data Inicial e a Data Final.");
+        return;
+    }
+    if(new Date(sDate) > new Date(eDate)) {
+        alert("As datas estão invertidas. Corrija o período antes de consultar.");
+        return;
+    }
     
     switchTab('resultados');
     const list = document.getElementById('results-list');
@@ -199,49 +243,43 @@ function buscarDados() {
         }
         
         let totalBytes = 0;
-        d.results.forEach(f => {
-            if (f.size && f.size !== "N/A") {
-                totalBytes += parseFloat(f.size);
-            }
-        });
+        d.results.forEach(f => { if (f.size && f.size !== "N/A") { totalBytes += parseFloat(f.size); } });
         
         document.getElementById('total-count').innerText = d.results.length;
         document.getElementById('total-size').innerText = totalBytes.toFixed(2) + " MB";
         document.getElementById('results-meta').classList.remove('hidden');
-        if(btnDown) btnDown.classList.remove('hidden');
+        
+        const shapeName = document.getElementById('uploadedShapeName').value;
+        
+        if(btnDown) {
+            btnDown.classList.remove('hidden');
+            if(shapeName) {
+                btnDown.innerHTML = '<span class="material-symbols-outlined">content_cut</span> Recortar e Baixar Selecionados';
+                btnDown.style.backgroundColor = '#e66a00';
+            } else {
+                btnDown.innerHTML = '<span class="material-symbols-outlined">download</span> Baixar Originais Selecionados';
+                btnDown.style.backgroundColor = '#0079c1';
+            }
+        }
         
         const selectAll = document.getElementById('select-all');
         if(selectAll) selectAll.checked = false;
         
-        const shapeName = document.getElementById('uploadedShapeName').value;
-        
-        d.results.forEach(f => {
+        d.results.forEach((f, index) => {
             const item = document.createElement('div');
             item.className = 'result-item';
             
-            let acaoBotao = "";
-            let textoBotao = "";
-            let corBotao = "";
-            
-            if(shapeName) {
-                textoBotao = "✂️ Recortar e Baixar";
-                acaoBotao = `onclick="baixarRecortado('${f.download_link}')"`;
-                corBotao = "color: #e66a00;";
-            } else {
-                textoBotao = "⬇️ Baixar Original";
-                acaoBotao = `onclick="window.open('${f.download_link}', '_blank')"`;
-                corBotao = "color: #0079c1;";
-            }
-
             let html = `
                 <div class="result-info">
-                    <input type="checkbox" value="${f.download_link}" onclick="verificarSelecao()"> 
+                    <input type="checkbox" value="${f.download_link}" id="cb-${index}" onclick="verificarSelecao()"> 
                     <div class="result-text">
                         <div class="result-filename" title="${f.filename}">${f.filename}</div>
-                        <div class="result-size">${f.size} MB</div>
+                        <div class="result-size">
+                            ${f.size} MB
+                            <span id="status-${index}" style="margin-left:10px; font-weight:bold;"></span>
+                        </div>
                     </div>
                 </div>
-                <button class="btn-text btn-action" style="${corBotao}" ${acaoBotao}>${textoBotao}</button>
             `;
             item.innerHTML = html;
             list.appendChild(item);
@@ -270,47 +308,68 @@ function toggleSelectAll() {
     verificarSelecao();
 }
 
+// ==========================================
+// GERENCIADOR DE DOWNLOADS E RECORTES
+// ==========================================
 function baixarSelecionados() {
     const cbs = document.querySelectorAll('.result-item input:checked');
     if(cbs.length === 0) return;
     
     const shapeName = document.getElementById('uploadedShapeName').value;
+    const btn = document.querySelector('.btn-aneel.download');
+    
     if(shapeName) {
-        if(!confirm(`Você selecionou ${cbs.length} arquivos para recorte. Isso pode demorar.\n\nDeseja continuar?`)) return;
-        const links = Array.from(cbs).map(c => c.value);
-        processarFilaDownloads(links);
+        if(!confirm(`Você selecionou ${cbs.length} arquivos para recorte.\n\nO sistema vai baixar, recortar e salvar um por um no seu computador. Isso pode demorar.\n\nDeseja continuar?`)) return;
+        
+        btn.disabled = true;
+        const textoOriginal = btn.innerHTML;
+        btn.innerHTML = '<span class="material-symbols-outlined">hourglass_empty</span> Processando Recortes...';
+        
+        const tarefas = Array.from(cbs).map(c => ({
+            url: c.value,
+            statusId: c.id.replace('cb-', 'status-')
+        }));
+        
+        processarFilaDownloads(tarefas, btn, textoOriginal);
         return;
     }
 
-    const btn = document.querySelector('.btn-aneel.download');
-    if(btn) btn.disabled = true;
-    
-    const arquivos = Array.from(cbs).map(c => c.value);
-    
-    fetch('/baixar_selecionados', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({arquivos: arquivos})
-    }).then(r=>r.json()).then(d=>{
-        alert(d.message);
-        if(btn) btn.disabled = false;
-    }).catch(e => { alert("Erro no download"); if(btn) btn.disabled = false; });
-}
-
-async function processarFilaDownloads(links) {
-    for (const url of links) {
-        await baixarRecortado(url);
+    if(btn) {
+        btn.disabled = true;
+        const textoOriginal = btn.innerHTML;
+        btn.innerHTML = '<span class="material-symbols-outlined">hourglass_empty</span> Baixando...';
+        
+        const arquivos = Array.from(cbs).map(c => c.value);
+        
+        fetch('/baixar_selecionados', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({arquivos: arquivos})
+        }).then(r=>r.json()).then(d=>{
+            alert(d.message);
+            btn.disabled = false;
+            btn.innerHTML = textoOriginal;
+        }).catch(e => { 
+            alert("Erro no download"); 
+            btn.disabled = false;
+            btn.innerHTML = textoOriginal;
+        });
     }
 }
 
-async function baixarRecortado(url) {
+async function processarFilaDownloads(tarefas, btn, textoOriginal) {
+    for (const t of tarefas) { await baixarRecortado(t.url, t.statusId); }
+    btn.disabled = false;
+    btn.innerHTML = textoOriginal;
+    alert("Processamento concluído!");
+}
+
+async function baixarRecortado(url, statusId) {
     const shape = document.getElementById('uploadedShapeName').value;
-    let btn = event ? event.target : null;
-    let txtOriginal = "";
-    
-    if(btn && btn.tagName === 'BUTTON') {
-        txtOriginal = btn.innerText;
-        btn.innerText = "⏳"; 
-        btn.disabled = true;
+    const statusSpan = document.getElementById(statusId);
+
+    if(statusSpan) {
+        statusSpan.innerText = "⏳ Recortando...";
+        statusSpan.style.color = "#e66a00";
     }
 
     try {
@@ -323,34 +382,34 @@ async function baixarRecortado(url) {
             const blob = await r.blob();
             const a = document.createElement('a');
             a.href = window.URL.createObjectURL(blob);
+            
+            // Lógica para preservar o nome oficial da NASA
+            let nomeOriginal = url.split('/').pop().split('?')[0];
+            let nomeSemExtensao = nomeOriginal.substring(0, nomeOriginal.lastIndexOf('.')) || nomeOriginal;
+
             let ext = ".geojson";
             const u = url.toLowerCase();
-            if(u.endsWith('.zip')) ext = ".zip"; else if(u.endsWith('.nc')) ext = ".nc"; else if(u.endsWith('.gpkg')) ext = ".gpkg";
-            a.download = `recortado_${Math.floor(Math.random()*1000)}${ext}`;
+            if(u.includes('.zip')) ext = ".zip"; 
+            else if(u.includes('.nc')) ext = ".nc"; 
+            else if(u.includes('.gpkg')) ext = ".gpkg";
+            
+            a.download = `recorte_${nomeSemExtensao}${ext}`;
+
             a.click();
-            if(btn) btn.innerText = "✅";
+            
+            if(statusSpan) { statusSpan.innerText = "✅ Salvo"; statusSpan.style.color = "green"; }
         } else {
             const err = await r.json(); 
-            const msg = err.error || "Erro desconhecido";
-            if(btn) { 
-                alert("Erro ao recortar: " + msg); 
-                btn.innerText = "❌"; 
-            }
+            if(statusSpan) { statusSpan.innerText = "❌ Falha"; statusSpan.style.color = "red"; statusSpan.title = err.error || "Erro desconhecido"; }
         }
     } catch(e) { 
-        if(btn) { 
-            alert("Erro de conexão com o servidor."); 
-            btn.innerText = "❌"; 
-        } 
-    } finally { 
-        if(btn) setTimeout(()=> { btn.innerText=txtOriginal; btn.disabled=false; }, 3000); 
-    }
+        if(statusSpan) { statusSpan.innerText = "❌ Sem Conexão"; statusSpan.style.color = "red"; } 
+    } 
 }
 
 // =========================================
 //  LÓGICA DO POP-UP (MODAL)
 // =========================================
-
 function toggleModalButton() {
     const check = document.getElementById('check-terms');
     const btn = document.getElementById('btn-modal-ok');

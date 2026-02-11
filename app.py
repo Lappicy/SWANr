@@ -14,6 +14,7 @@ import earthaccess
 import geopandas as gpd
 import pandas as pd
 from shapely.geometry import shape
+from dotenv import load_dotenv
 
 # --- CONFIGURAÇÃO DE DRIVERS (Fiona) ---
 import fiona
@@ -33,14 +34,7 @@ except ImportError:
 
 app = Flask(__name__)
 
-# --- 1. CREDENCIAIS & CONFIGURAÇÕES ---
-# Lógica segura para o Render.com / GitHub Público
-# Ele tenta pegar do sistema (Render). Se não achar, usa strings vazias (ou credenciais locais se você configurar seu .env)
-if "EARTHDATA_USERNAME" not in os.environ:
-    os.environ["EARTHDATA_USERNAME"] = os.getenv("EARTHDATA_USER_LOCAL", "") # Ou coloque sua senha aqui APENAS se não for subir pro GitHub público
-
-if "EARTHDATA_PASSWORD" not in os.environ:
-    os.environ["EARTHDATA_PASSWORD"] = os.getenv("EARTHDATA_PASS_LOCAL", "")
+#load_dotenv()
 
 # Caminhos Absolutos
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -52,10 +46,20 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-try:
-    auth = earthaccess.login(strategy="environment", persist=True)
-except Exception as e:
-    print(f">>> Erro Login Earthdata: {e}")
+
+auth = None 
+usuario = os.environ.get("EARTHDATA_USERNAME")
+senha = os.environ.get("EARTHDATA_PASSWORD")
+
+if not usuario or not senha:
+    print(">>> AVISO: Credenciais da NASA ausentes. O download falhará.")
+else:
+    try:
+        # A API earthaccess vai ler automaticamente as variáveis de ambiente
+        auth = earthaccess.login(strategy="environment", persist=True)
+        print(">>> Login na NASA realizado com sucesso!")
+    except Exception as e:
+        print(f">>> Erro no Login Earthdata: {e}")
 
 # Coleções Base
 COLLECTIONS_BASE = {
