@@ -71,13 +71,17 @@
                         <label class="sub-label">Subproduto</label>
                         <select name="subproduto" class="sub-select"><option value="Reach">Reach</option><option value="Node">Node</option></select>
                         <label class="sub-label">Continente</label>
-                        <select name="continente" class="sub-select"><option value="SA">América do Sul</option><option value="NA">América do Norte</option><option value="AF">África</option><option value="EU">Europa</option><option value="AS">Ásia</option><option value="OC">Oceania</option></select>
+                        <select name="continente" class="sub-select">
+                            <option value="SA" selected>América do Sul (SA)</option>
+                        </select>
                     </div>
                     <div id="sub-lake" class="sub-opts hidden">
                         <label class="sub-label">Tipo</label>
                         <select name="subproduto" class="sub-select"><option value="Prior">Prior</option><option value="Obs">Obs</option><option value="Unassigned">Unassigned</option><option value="Avg">Avg</option></select>
                         <label class="sub-label">Continente</label>
-                        <select name="continente" class="sub-select"><option value="SA">América do Sul</option><option value="NA">América do Norte</option><option value="AF">África</option><option value="EU">Europa</option></select>
+                        <select name="continente" class="sub-select">
+                            <option value="SA" selected>América do Sul (SA)</option>
+                        </select>
                     </div>
                     <div id="sub-raster" class="sub-opts hidden">
                         <label class="sub-label">Resolução</label>
@@ -86,7 +90,12 @@
                 </div>
 
                 <div class="filter-block">
-                    <label>2. Área de Interesse</label>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                        <label style="margin: 0;">2. Área de Interesse</label>
+                        <button type="button" class="btn-text" onclick="limparArea()" style="margin: 0; padding: 0; font-size: 0.75rem; color: #dc3545; text-decoration: none; display: flex; align-items: center; gap: 2px;">
+                            <span class="material-symbols-outlined" style="font-size: 14px;">delete</span> Limpar Área
+                        </button>
+                    </div>
                     <div class="aoi-tabs">
                         <div class="upload-container">
                             <p style="font-size:0.75rem; color:#666; margin:0 0 5px;">Upload (.zip, .gpkg, .kml, .kmz)</p>
@@ -215,7 +224,9 @@
             <button id="btn-download-selected" type="button" class="btn-aneel download hidden" onclick="baixarSelecionados()" disabled>
                 <span class="material-symbols-outlined">download</span> Baixar Selecionados
             </button>
-            <button type="button" class="btn-text" onclick="switchTab('swot')">« Voltar</button>
+            <button type="button" class="btn-text" onclick="resetarConsulta()" style="margin-top: 15px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; color: #555;">
+                <span class="material-symbols-outlined" style="font-size: 18px;">refresh</span> Voltar e Iniciar Nova Consulta
+            </button>
         </div>
     </div>
 

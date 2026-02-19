@@ -34,9 +34,9 @@ except ImportError:
 
 app = Flask(__name__)
 
-#load_dotenv()
+# --- 1. CREDENCIAIS & CONFIGURAÇÕES ---
+load_dotenv()
 
-# Caminhos Absolutos
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DOWNLOAD_FOLDER = os.path.join(BASE_DIR, 'dados_swot')
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'temp_uploads')
@@ -46,7 +46,6 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-
 auth = None 
 usuario = os.environ.get("EARTHDATA_USERNAME")
 senha = os.environ.get("EARTHDATA_PASSWORD")
@@ -55,24 +54,20 @@ if not usuario or not senha:
     print(">>> AVISO: Credenciais da NASA ausentes. O download falhará.")
 else:
     try:
-        # A API earthaccess vai ler automaticamente as variáveis de ambiente
         auth = earthaccess.login(strategy="environment", persist=True)
         print(">>> Login na NASA realizado com sucesso!")
     except Exception as e:
         print(f">>> Erro no Login Earthdata: {e}")
 
-# Coleções Base
 COLLECTIONS_BASE = {
     "PIXC": "SWOT_L2_HR_PIXC_D",
     "Raster": "SWOT_L2_HR_Raster_D"
 }
 
-CACHE_IBGE = {}
+CACHE_ESTADOS = {}
 
 # --- 2. FUNÇÕES AUXILIARES ---
-
 def carregar_geodataframe(caminho_arquivo):
-    """Carrega vetores lidando com ZIPs e caminhos do Windows."""
     abs_path = os.path.abspath(caminho_arquivo).replace('\\', '/')
     ext = os.path.splitext(caminho_arquivo)[1].lower()
     temp_dir = None
@@ -99,7 +94,6 @@ def carregar_geodataframe(caminho_arquivo):
         raise e
 
 # --- 3. ROTAS PRINCIPAIS ---
-
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -111,6 +105,10 @@ def upload_user_shape():
     if file.filename == '': return jsonify({'error': 'Nome do arquivo vazio.'}), 400
 
     filename = secure_filename(file.filename)
+    
+    if filename.lower().endswith('.shp'):
+        return jsonify({'error': 'Um arquivo .shp não funciona sozinho! Por favor, compacte todos os arquivos do shapefile (.shp, .shx, .dbf, .prj) em um arquivo .ZIP e faça o upload.'}), 400
+
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     file.save(filepath)
 
@@ -118,15 +116,11 @@ def upload_user_shape():
     try:
         gdf, temp_dir = carregar_geodataframe(filepath)
         
-        if gdf.crs is None: 
-            gdf.set_crs(epsg=4326, inplace=True)
-        else: 
-            gdf = gdf.to_crs("EPSG:4326")
+        if gdf.crs is None: gdf.set_crs(epsg=4326, inplace=True)
+        else: gdf = gdf.to_crs("EPSG:4326")
         
-        # Correção automática de geometria (Remove erros de topologia)
         if not gdf.empty:
-            if gdf.has_z.any():
-                gdf.geometry = gdf.geometry.map(lambda g: shape(g).simplify(0))
+            if gdf.has_z.any(): gdf.geometry = gdf.geometry.map(lambda g: shape(g).simplify(0))
             gdf.geometry = gdf.geometry.make_valid()
 
         return jsonify({
@@ -140,25 +134,59 @@ def upload_user_shape():
     finally:
         if temp_dir and os.path.exists(temp_dir): shutil.rmtree(temp_dir)
 
-@app.route('/limites/ibge/<uf_sigla>')
-def get_ibge_limits(uf_sigla):
+@app.route('/limites/estado/<uf_sigla>')
+def get_estado_limits(uf_sigla):
     uf = uf_sigla.upper()
     if uf == 'BR': return jsonify({"bbox": [-73.99, -33.75, -28.84, 5.27], "geojson": None})
-    if uf in CACHE_IBGE: return jsonify(CACHE_IBGE[uf])
+    if uf in CACHE_ESTADOS: return jsonify(CACHE_ESTADOS[uf])
 
     try:
-        url = f"https://servicodados.ibge.gov.br/api/v3/malhas/estados/{uf}?formato=application/vnd.geo+json&qualidade=minima"
-        resp = requests.get(url)
-        if resp.status_code != 200: return jsonify({"error": "Erro na API do IBGE"}), 500
+        caminhos_possiveis = [
+            os.path.join(BASE_DIR, 'camadas', 'BR_UF_2024.shp'), 
+            os.path.join(BASE_DIR, 'camadas', 'BR_Estados.gpkg'),
+            os.path.join(BASE_DIR, 'camadas', 'BR_Estados.geojson'),
+            os.path.join(BASE_DIR, 'camadas', 'BR_Estados.shp')
+        ]
         
-        geojson_data = resp.json()
-        geom = shape(geojson_data['features'][0]['geometry'])
-        bounds = geom.bounds 
+        caminho_arquivo = None
+        for cp in caminhos_possiveis:
+            if os.path.exists(cp):
+                caminho_arquivo = cp
+                break
+                
+        if not caminho_arquivo:
+            return jsonify({"error": "Arquivo de estados (BR_UF_2024.shp ou similar) não encontrado na pasta 'camadas'."}), 404
+
+        gdf = gpd.read_file(caminho_arquivo)
+        
+        coluna_uf = None
+        for col in gdf.columns:
+            if gdf[col].astype(str).str.strip().str.upper().eq(uf).any():
+                coluna_uf = col
+                break
+
+        if not coluna_uf:
+            return jsonify({"error": f"A sigla '{uf}' não foi encontrada em nenhuma coluna do shapefile."}), 400
+
+        gdf_estado = gdf[gdf[coluna_uf].astype(str).str.strip().str.upper() == uf].copy()
+
+        if gdf_estado.empty:
+            return jsonify({"error": f"Estado {uf} não encontrado no arquivo."}), 404
+
+        if gdf_estado.crs and gdf_estado.crs.to_string() != "EPSG:4326":
+            gdf_estado = gdf_estado.to_crs("EPSG:4326")
+
+        gdf_estado['geometry'] = gdf_estado['geometry'].simplify(0.005)
+
+        bounds = gdf_estado.total_bounds 
+        geojson_data = json.loads(gdf_estado.to_json())
         
         res = {"bbox": [bounds[0], bounds[1], bounds[2], bounds[3]], "geojson": geojson_data}
-        CACHE_IBGE[uf] = res
+        CACHE_ESTADOS[uf] = res
         return jsonify(res)
-    except Exception as e: return jsonify({"error": str(e)}), 500
+        
+    except Exception as e: 
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/camadas/<nome_camada>')
 def get_camada(nome_camada):
@@ -178,8 +206,9 @@ def get_camada(nome_camada):
         return Response(gdf.to_json(), mimetype='application/json')
     except Exception as e: return jsonify({"error": str(e)}), 500
 
-# --- 4. BUSCA E DOWNLOAD ---
-
+# =======================================================
+# BUSCA E DOWNLOAD (SISTEMA DE PESQUISA FUZZY BLINDADO)
+# =======================================================
 @app.route('/buscar_dados', methods=['POST'])
 def buscar_dados():
     try:
@@ -188,59 +217,80 @@ def buscar_dados():
         start_date = d.get('start_date')
         end_date = d.get('end_date')
         
-        if not start_date or not end_date: 
-            return jsonify({"status": "error", "message": "Selecione o período."}), 400
+        if not start_date or not end_date: return jsonify({"status": "error", "message": "Selecione o período."}), 400
         
         short_name = ""
-        granule_pattern = "*"
+        subproduto_str = ""
         
-        # Seleção Dinâmica de Coleção
+        # 1. Identifica a Coleção Oficial da NASA
         if prod == 'RiverSP':
+            short_name = "SWOT_L2_HR_RiverSP_D"
             sub = d.get('subproduto')
-            if sub == 'Reach': short_name = "SWOT_L2_HR_RiverSP_Reach_D"
-            elif sub == 'Node': short_name = "SWOT_L2_HR_RiverSP_Node_D"
-            else: short_name = "SWOT_L2_HR_RiverSP_D"
-            if sub: granule_pattern = f"*{sub}*" 
-
+            if sub: subproduto_str = sub
+            
         elif prod == 'LakeSP':
+            short_name = "SWOT_L2_HR_LakeSP_D"
             sub = d.get('subproduto')
-            if sub:
-                short_name = f"SWOT_L2_HR_LakeSP_{sub}_D"
-                granule_pattern = f"*{sub}*"
-            else:
-                short_name = "SWOT_L2_HR_LakeSP_D"
-
+            if sub: subproduto_str = sub
+            
         elif prod in COLLECTIONS_BASE:
             short_name = COLLECTIONS_BASE[prod]
-            if prod == 'Raster':
-                granule_pattern = f"*{d.get('resolucao', '100m')}*"
-        
-        else:
+            if prod == 'Raster': 
+                res = d.get('resolucao')
+                if res: subproduto_str = res
+        else: 
             return jsonify({"status": "error", "message": "Produto inválido"}), 400
 
-        # Filtros
-        if d.get('cycle'): granule_pattern += f"*_{str(d['cycle']).zfill(3)}_"
-        if d.get('pass'): granule_pattern += f"_{str(d['pass']).zfill(3)}_"
-        if d.get('tile'): granule_pattern += f"_{d['tile']}*"
-        if d.get('continente') and ('SP' in prod): granule_pattern += f"_{d['continente']}*"
+        # 2. Constrói o Padrão de Busca Infalível (Usando '*')
+        parts = []
         
-        granule_pattern += "*"
+        if subproduto_str: 
+            parts.append(subproduto_str)
+            
+        cycle_val = d.get('cycle')
+        if cycle_val and str(cycle_val).strip() != "": 
+            parts.append(str(cycle_val).strip().zfill(3))
+            
+        pass_val = d.get('pass')
+        if pass_val and str(pass_val).strip() != "": 
+            parts.append(str(pass_val).strip().zfill(3))
 
-        bbox = None
-        if d.get('lon_min'):
-            bbox = (float(d['lon_min']), float(d['lat_min']), float(d['lon_max']), float(d['lat_max']))
+        tile_val = d.get('tile')
+        if tile_val and str(tile_val).strip() != "":
+            parts.append(str(tile_val).strip())
+            
+        continente = d.get('continente')
+        if continente and ('SP' in prod): 
+            parts.append(continente)
+            
+        # Junta tudo criando uma busca fuzzy "indestrutível" (Ex: *Reach*044*005*SA*)
+        core_pattern = "*".join(parts)
+        granule_pattern = f"*{core_pattern}*"
+        
+        # Limpa duplos asteriscos que confundem a API
+        while "**" in granule_pattern:
+            granule_pattern = granule_pattern.replace("**", "*")
 
-        print(f"Buscando: {short_name} | Padrão: {granule_pattern}")
+        # 3. Empacota a requisição de forma limpa (Ocultando vazios)
+        search_kwargs = {
+            "short_name": short_name,
+            "granule_name": granule_pattern
+        }
+        
+        if start_date and end_date:
+            search_kwargs["temporal"] = (start_date, end_date)
+            
+        # Envia a área de interesse APENAS se ela de fato existir
+        if d.get('lon_min') and str(d.get('lon_min')).strip() != "":
+            try:
+                bbox = (float(d['lon_min']), float(d['lat_min']), float(d['lon_max']), float(d['lat_max']))
+                search_kwargs["bounding_box"] = bbox
+            except: pass
 
         results = []
         for i in range(3):
             try:
-                results = earthaccess.search_data(
-                    short_name=short_name, 
-                    temporal=(start_date, end_date), 
-                    bounding_box=bbox, 
-                    granule_name=granule_pattern
-                )
+                results = earthaccess.search_data(**search_kwargs)
                 break 
             except Exception: time.sleep(1)
 
@@ -250,24 +300,18 @@ def buscar_dados():
                 meta = r['meta']
                 filename = meta.get('native-id', meta.get('producer-granule-id', 'unknown'))
                 size_val = r.size() if r.size() else 0
-                size_mb = f"{round(size_val, 2)}" # Envia número string
-                
-                link = r.data_links(access="external")[0]
-                fmt.append({
-                    "filename": filename, 
-                    "size": size_mb, 
-                    "download_link": link
-                })
+                fmt.append({"filename": filename, "size": f"{round(size_val, 2)}", "download_link": r.data_links(access="external")[0]})
             except: pass
 
         return jsonify({"status": "success", "results": fmt})
 
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as e: return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/baixar_selecionados', methods=['POST'])
 def baixar_selecionados():
     try:
+        if not auth: return jsonify({"status": "error", "message": "O servidor não conseguiu fazer login na NASA."}), 500
+
         data = request.json
         links = data.get('arquivos', [])
         session = auth.get_session()
@@ -289,19 +333,51 @@ def download_cropped():
     d = request.json
     url = d.get('granule_url')
     mask_name = d.get('shape_filename')
+    state_uf = d.get('state_uf')
 
-    if not url or not mask_name: return jsonify({'error': 'Dados incompletos.'}), 400
+    if not url or (not mask_name and not state_uf): 
+        return jsonify({'error': 'Dados incompletos. Informe um shape ou um estado.'}), 400
+    if not auth: 
+        return jsonify({'error': 'Falha no login da NASA. Verifique credenciais.'}), 500
 
     tmp_mask_dir = None
-    
     try:
-        mask_path = os.path.join(app.config['UPLOAD_FOLDER'], mask_name)
-        gdf_mask, tmp_mask_dir = carregar_geodataframe(mask_path)
+        # Se for Upload do usuário
+        if mask_name:
+            mask_path = os.path.join(app.config['UPLOAD_FOLDER'], mask_name)
+            gdf_mask, tmp_mask_dir = carregar_geodataframe(mask_path)
+            
+        # Se for seleção de Estado
+        elif state_uf:
+            caminhos_possiveis = [
+                os.path.join(BASE_DIR, 'camadas', 'BR_UF_2024.shp'), 
+                os.path.join(BASE_DIR, 'camadas', 'BR_Estados.gpkg'),
+                os.path.join(BASE_DIR, 'camadas', 'BR_Estados.geojson'),
+                os.path.join(BASE_DIR, 'camadas', 'BR_Estados.shp')
+            ]
+            caminho_arquivo = next((cp for cp in caminhos_possiveis if os.path.exists(cp)), None)
+            
+            if not caminho_arquivo:
+                return jsonify({"error": "Arquivo da malha de estados não encontrado no servidor."}), 404
+                
+            gdf_full = gpd.read_file(caminho_arquivo)
+            coluna_uf = None
+            uf_upper = state_uf.upper()
+            
+            for col in gdf_full.columns:
+                if gdf_full[col].astype(str).str.strip().str.upper().eq(uf_upper).any():
+                    coluna_uf = col
+                    break
+                    
+            if not coluna_uf:
+                return jsonify({"error": f"A sigla '{uf_upper}' não foi encontrada na malha."}), 400
+                
+            gdf_mask = gdf_full[gdf_full[coluna_uf].astype(str).str.strip().str.upper() == uf_upper].copy()
+            if gdf_mask.empty:
+                return jsonify({"error": "Geometria do estado vazia ou não encontrada."}), 404
         
         if gdf_mask.crs is None: gdf_mask.set_crs(epsg=4326, inplace=True)
         else: gdf_mask = gdf_mask.to_crs("EPSG:4326")
-        
-        # Correção Crítica de Geometria da Máscara
         gdf_mask.geometry = gdf_mask.geometry.make_valid()
 
         session = auth.get_session()
@@ -320,7 +396,6 @@ def download_cropped():
             mimetype = "application/octet-stream"
             download_name_browser = f"recortado_{real_filename}"
 
-            # --- PROCESSAMENTO ---
             if ext_orig == '.zip':
                 extract_path = os.path.join(tmpdirname, "x") 
                 with zipfile.ZipFile(short_input, 'r') as z: z.extractall(extract_path)
@@ -330,16 +405,12 @@ def download_cropped():
                 
                 gdf_data = gpd.read_file(shps[0])
                 if gdf_data.crs != gdf_mask.crs: gdf_data = gdf_data.to_crs(gdf_mask.crs)
-                
-                # Correção de Geometria dos Dados
                 gdf_data.geometry = gdf_data.geometry.make_valid()
                 
-                try:
-                    clipped = gpd.clip(gdf_data, gdf_mask)
-                except Exception:
-                    return jsonify({'error': 'Erro geométrico complexo no recorte.'}), 400
+                try: clipped = gpd.clip(gdf_data, gdf_mask)
+                except Exception: return jsonify({'error': 'Erro geométrico no recorte.'}), 400
 
-                if clipped.empty: return jsonify({'error': 'Sem sobreposição.'}), 400
+                if clipped.empty: return jsonify({'error': 'Sem sobreposição na área.'}), 400
                 
                 out_shp_dir = os.path.join(tmpdirname, "out")
                 os.makedirs(out_shp_dir, exist_ok=True)
@@ -385,9 +456,7 @@ def download_cropped():
 
             return send_file(path_final_persistente, as_attachment=True, download_name=download_name_browser, mimetype=mimetype)
 
-    except Exception as e:
-        print(f"ERRO: {traceback.format_exc()}")
-        return jsonify({'error': f"Erro interno: {str(e)}"}), 500
+    except Exception as e: return jsonify({'error': f"Erro interno: {str(e)}"}), 500
     finally:
         if tmp_mask_dir and os.path.exists(tmp_mask_dir): shutil.rmtree(tmp_mask_dir)
 

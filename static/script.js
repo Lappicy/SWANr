@@ -20,6 +20,18 @@ function switchTab(t) {
     if(t=='resultados') document.getElementById('tab-resultados').classList.add('active');
 }
 
+function resetarConsulta() {
+    document.getElementById('searchForm').reset();
+    limparArea();
+    toggleSubproducts();
+    document.getElementById('date-msg').classList.add('hidden');
+    document.getElementById('results-list').innerHTML = "";
+    document.getElementById('results-meta').classList.add('hidden');
+    document.getElementById('btn-download-selected').classList.add('hidden');
+    document.getElementById('tab-resultados').classList.add('disabled');
+    switchTab('swot');
+}
+
 function toggleSubproducts() {
     document.querySelectorAll('.sub-opts').forEach(e => e.classList.add('hidden'));
     document.querySelectorAll('.sub-opts select').forEach(s => s.disabled = true);
@@ -44,7 +56,6 @@ function togglePanel() {
     else { b.style.display = 'flex'; p.style.removeProperty('height'); }
 }
 
-// VALIDAÇÃO DEFENSIVA DE DATAS (NOVO)
 function validarDatas() {
     const s = document.getElementById('start_date');
     const e = document.getElementById('end_date');
@@ -60,15 +71,13 @@ function validarDatas() {
     msg.style.backgroundColor = "#fff3cd";
     msg.style.borderColor = "#ffeeba";
 
-    // Impede datas antes do lançamento
     if ((d1 && d1 < min) || (d2 && d2 < min)) {
         alert("O satélite não estava lançado/disponível antes de 15/02/2022.");
         if(d1<min) s.value=""; if(d2<min) e.value=""; return;
     }
 
-    // Previne datas invertidas
     if (d1 && d2 && d1 > d2) {
-        msg.innerHTML = "❌ <strong>Erro:</strong> A data está invertida. A data inicial não pode ser maior que a final.";
+        msg.innerHTML = "❌ <strong>Erro:</strong> A data está invertida. A data inicial deve ser anterior à data final.";
         msg.style.color = "#721c24";
         msg.style.backgroundColor = "#f8d7da";
         msg.style.borderColor = "#f5c6cb";
@@ -101,6 +110,11 @@ map.on(L.Draw.Event.CREATED, function (e) {
     updateCoords(e.layer.getBounds());
 });
 map.on(L.Draw.Event.DELETED, function() { updateCoords(null); });
+
+function limparArea() {
+    limparTudoMenos('reset'); 
+    updateCoords(null);
+}
 
 function limparTudoMenos(tipo) {
     if(tipo !== 'draw') drawnItems.clearLayers();
@@ -146,17 +160,27 @@ async function uploadShape() {
 
 function aplicarFiltroEstado() {
     const uf = document.getElementById('brazil_states').value;
+    
+    if (stateLayer) {
+        map.removeLayer(stateLayer);
+        stateLayer = null;
+    }
+
     limparTudoMenos('state');
     if(!uf) { updateCoords(null); return; }
     startLoading();
-    fetch(`/limites/ibge/${uf}`).then(r=>r.json()).then(d=>{
-        if(d.error) throw d.error;
-        stateLayer = L.geoJSON(d.geojson, {style: {color: '#0079c1', weight: 1}}).addTo(map);
+    
+    fetch(`/limites/estado/${uf}`).then(r=>r.json()).then(d=>{
+        if(d.error) {
+            alert("Erro do Sistema: " + d.error + "\n\n(Verifique se você colocou o arquivo BR_UF_2024 na pasta 'camadas').");
+            throw d.error;
+        }
+        stateLayer = L.geoJSON(d.geojson, {style: {color: '#0079c1', weight: 2, fillOpacity: 0.1}}).addTo(map);
         const b = d.bbox; 
         const bounds = L.latLngBounds([b[1], b[0]], [b[3], b[2]]);
         map.fitBounds(bounds);
         updateCoords(bounds);
-    }).catch(e=>alert(e)).finally(()=>stopLoading());
+    }).catch(e=>console.error(e)).finally(()=>stopLoading());
 }
 
 function toggleCamada(checkbox, nomeArquivo, nomeExibicao, cor, tipo) {
@@ -194,7 +218,7 @@ function toggleCamada(checkbox, nomeArquivo, nomeExibicao, cor, tipo) {
 }
 
 // ==========================================
-// FUNÇÕES DE BUSCA E RESULTADOS
+// FUNÇÕES DE BUSCA E RESULTADOS ATUALIZADAS
 // ==========================================
 function buscarDados() {
     const p = document.getElementById('produto').value;
@@ -249,11 +273,15 @@ function buscarDados() {
         document.getElementById('total-size').innerText = totalBytes.toFixed(2) + " MB";
         document.getElementById('results-meta').classList.remove('hidden');
         
+        // --- NOVA LÓGICA DO BOTÃO DE RECORTE ---
         const shapeName = document.getElementById('uploadedShapeName').value;
+        const stateUF = document.getElementById('brazil_states').value;
+        // Identifica se recorta: Se tiver um upload, OU se tiver um estado selecionado que NÃO seja "BR"
+        const willCrop = shapeName || (stateUF && stateUF !== 'BR');
         
         if(btnDown) {
             btnDown.classList.remove('hidden');
-            if(shapeName) {
+            if(willCrop) {
                 btnDown.innerHTML = '<span class="material-symbols-outlined">content_cut</span> Recortar e Baixar Selecionados';
                 btnDown.style.backgroundColor = '#e66a00';
             } else {
@@ -261,6 +289,7 @@ function buscarDados() {
                 btnDown.style.backgroundColor = '#0079c1';
             }
         }
+        // ---------------------------------------
         
         const selectAll = document.getElementById('select-all');
         if(selectAll) selectAll.checked = false;
@@ -316,9 +345,11 @@ function baixarSelecionados() {
     if(cbs.length === 0) return;
     
     const shapeName = document.getElementById('uploadedShapeName').value;
+    const stateUF = document.getElementById('brazil_states').value;
+    const willCrop = shapeName || (stateUF && stateUF !== 'BR');
     const btn = document.querySelector('.btn-aneel.download');
     
-    if(shapeName) {
+    if(willCrop) {
         if(!confirm(`Você selecionou ${cbs.length} arquivos para recorte.\n\nO sistema vai baixar, recortar e salvar um por um no seu computador. Isso pode demorar.\n\nDeseja continuar?`)) return;
         
         btn.disabled = true;
@@ -327,7 +358,9 @@ function baixarSelecionados() {
         
         const tarefas = Array.from(cbs).map(c => ({
             url: c.value,
-            statusId: c.id.replace('cb-', 'status-')
+            statusId: c.id.replace('cb-', 'status-'),
+            shape: shapeName,
+            state: (stateUF !== 'BR') ? stateUF : ''
         }));
         
         processarFilaDownloads(tarefas, btn, textoOriginal);
@@ -357,14 +390,13 @@ function baixarSelecionados() {
 }
 
 async function processarFilaDownloads(tarefas, btn, textoOriginal) {
-    for (const t of tarefas) { await baixarRecortado(t.url, t.statusId); }
+    for (const t of tarefas) { await baixarRecortado(t.url, t.statusId, t.shape, t.state); }
     btn.disabled = false;
     btn.innerHTML = textoOriginal;
     alert("Processamento concluído!");
 }
 
-async function baixarRecortado(url, statusId) {
-    const shape = document.getElementById('uploadedShapeName').value;
+async function baixarRecortado(url, statusId, shape, stateUF) {
     const statusSpan = document.getElementById(statusId);
 
     if(statusSpan) {
@@ -373,9 +405,13 @@ async function baixarRecortado(url, statusId) {
     }
 
     try {
+        const reqBody = { granule_url: url };
+        if (shape) reqBody.shape_filename = shape;
+        if (stateUF) reqBody.state_uf = stateUF;
+
         const r = await fetch('/download_cropped', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({granule_url: url, shape_filename: shape})
+            body: JSON.stringify(reqBody)
         });
         
         if(r.ok) {
@@ -383,7 +419,6 @@ async function baixarRecortado(url, statusId) {
             const a = document.createElement('a');
             a.href = window.URL.createObjectURL(blob);
             
-            // Lógica para preservar o nome oficial da NASA
             let nomeOriginal = url.split('/').pop().split('?')[0];
             let nomeSemExtensao = nomeOriginal.substring(0, nomeOriginal.lastIndexOf('.')) || nomeOriginal;
 
