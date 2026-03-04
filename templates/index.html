@@ -9,52 +9,111 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" />
+
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; }
+        
+        #map { top: 60px !important; height: calc(100vh - 60px) !important; }
+        .leaflet-top { top: 10px !important; }
+
+        .top-navbar {
+            position: fixed; top: 0; left: 0; width: 100%; height: 60px;
+            background-color: #ffffff; border-bottom: 2px solid #003366;
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            z-index: 2000; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .nav-brand { display: flex; align-items: center; gap: 10px; color: #003366; font-weight: 800; font-size: 1.3rem; letter-spacing: 0.5px;}
+        .nav-icon { color: #00509e; font-size: 34px !important; }
+        .nav-subtitle { font-size: 0.85rem; color: #666; font-weight: 600; margin-left: 5px; }
+
+        .nav-menu { display: flex; height: 100%; align-items: center; gap: 5px; }
+        .nav-item {
+            display: flex; align-items: center; gap: 6px; height: 100%; padding: 0 15px;
+            cursor: pointer; transition: 0.3s; font-weight: 600; font-size: 0.95rem;
+            color: #003366; border-bottom: 4px solid transparent; box-sizing: border-box;
+        }
+        .nav-item:hover { background-color: #f0f6fa; color: #00509e; }
+        .nav-item.active { border-bottom: 4px solid #00509e; color: #00509e; background-color: #eaf3fa; }
+        .nav-item.disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+        .nav-item .material-symbols-outlined { font-size: 20px; }
+
+        .nav-dropdown { position: relative; padding: 0 10px; }
+        .nav-dropdown .material-symbols-outlined { font-size: 26px; }
+        .dropdown-content {
+            display: none; position: absolute; top: 60px; right: 10px;
+            background-color: #fff; box-shadow: 0px 4px 12px rgba(0,0,0,0.15);
+            border: 1px solid #ddd; border-bottom-left-radius: 6px; border-bottom-right-radius: 6px;
+            padding: 12px; flex-direction: column; gap: 12px; z-index: 3000; min-width: 110px;
+        }
+        .nav-dropdown:hover .dropdown-content { display: flex; }
+        .dropdown-content label { 
+            color: #003366 !important; font-size: 0.9rem; font-weight: 600; 
+            cursor: pointer; display: flex; align-items: center; gap: 6px; margin: 0 !important;
+        }
+
+        .aneel-header, .panel-tabs { display: none !important; }
+
+        .aneel-panel { 
+            top: 75px !important; 
+            height: calc(100vh - 95px) !important; 
+            border-top-left-radius: 8px; 
+            border-top-right-radius: 8px;
+            padding-top: 5px !important;
+        }
+        
+        .panel-body { padding: 5px 15px 10px 15px !important; }
+        .filter-block { margin-bottom: 12px !important; }
+        .filter-block label { margin-bottom: 3px !important; } 
+        .section-title { margin-top: 10px !important; margin-bottom: 8px !important; }
+        
+        .aneel-panel label, 
+        .aneel-panel .sub-label, 
+        .aneel-panel .section-title, 
+        .aneel-panel .layer-label { color: #003366 !important; font-weight: 600 !important; }
+        .aneel-panel p { color: #00509e !important; }
+        .aneel-panel .btn-text { color: #dc3545 !important; } 
+    </style>
 </head>
 <body>
 
-    <div id="intro-modal" class="modal-overlay">
-        <div class="modal-content">
-            <p class="modal-header-text">Prezado(a) usuário(a), agradecemos a utilização da ferramenta Dashboard SWOT.</p>
-            
-            <div class="modal-body-text">
-                <p>As informações fornecidas nesta página devem ser usadas para fins de referência e análise preliminar. Esta é uma ferramenta em <strong>constante desenvolvimento</strong>.</p>
-                <p>A precisão dos dados depende da disponibilidade dos serviços da NASA e do processamento dos pacotes geoespaciais. O desenvolvedor não se responsabiliza por eventuais inconsistências momentâneas nos serviços externos.</p>
-                <p>Caso encontre inconsistências, bugs ou problemas, por favor, trate diretamente através do e-mail: <br> 
-                <a href="mailto:joaquim.ajr@outlook.com" style="color: #0079c1; font-weight: bold;">joaquim.ajr@outlook.com</a></p>
-                <p style="margin-top: 15px; font-weight: 600;">Aproveite o Dashboard SWOT e compartilhe!</p>
-            </div>
-
-            <div class="modal-footer">
-                <label class="modal-checkbox">
-                    <input type="checkbox" id="check-terms" onchange="toggleModalButton()">
-                    Eu concordo com os termos e condições acima
-                </label>
-                <button id="btn-modal-ok" class="btn-modal" onclick="closeModal()" disabled>Ok</button>
-            </div>
+    <div class="top-navbar">
+        <div class="nav-brand">
+            <span class="material-symbols-outlined nav-icon">waves</span>
+            <span>SWOT Download</span>
+            <span class="nav-subtitle">(Coleção D)</span>
         </div>
-    </div>
-    <div class="aneel-header">
-        <div class="header-left">
-            <div class="app-icon"><span class="material-symbols-outlined" style="color:white;">cloud_download</span></div>
-            <span class="app-title">SWOT Download <span class="app-subtitle">(Coleção D)</span></span>
+        <div class="nav-menu">
+            <div class="nav-item active" id="nav-swot" onclick="switchTab('swot')">
+                <span class="material-symbols-outlined">search</span> Consulta
+            </div>
+            <div class="nav-item" id="nav-camadas" onclick="switchTab('camadas')">
+                <span class="material-symbols-outlined">layers</span> Camadas
+            </div>
+            <div class="nav-item" id="nav-referencias" onclick="switchTab('referencias')">
+                <span class="material-symbols-outlined">menu_book</span> Referências
+            </div>
+            <div class="nav-item disabled" id="nav-resultados" onclick="switchTab('resultados')">
+                <span class="material-symbols-outlined">list_alt</span> Resultados
+            </div>
+            
+            <div style="width: 1px; height: 35px; background: #ccc; margin: 0 5px;"></div>
+            
+            <div class="nav-item nav-dropdown" title="Mapas Base">
+                <span class="material-symbols-outlined">public</span>
+                <div class="dropdown-content">
+                    <label><input type="radio" name="basemap_sel" value="sat" checked onchange="trocarBasemap('sat')"> Satélite</label>
+                    <label><input type="radio" name="basemap_sel" value="street" onchange="trocarBasemap('street')"> Ruas</label>
+                </div>
+            </div>
         </div>
     </div>
 
     <div id="map"></div>
 
     <div class="aneel-panel" id="main-panel">
-        <div class="panel-header">
-            <div class="panel-title"><span class="material-symbols-outlined">manage_search</span> Consulta</div>
-            <div class="panel-controls"><span class="material-symbols-outlined btn-icon" onclick="togglePanel()">remove</span></div>
-        </div>
-
-        <div class="panel-tabs">
-            <div class="tab active" id="tab-swot" onclick="switchTab('swot')">SWOT</div>
-            <div class="tab" id="tab-camadas" onclick="switchTab('camadas')">Camadas</div>
-            <div class="tab" id="tab-referencias" onclick="switchTab('referencias')">Referências</div>
-            <div class="tab disabled" id="tab-resultados" onclick="switchTab('resultados')">Resultados</div>
-        </div>
-
+        
         <div id="view-swot" class="panel-body">
             <form id="searchForm">
                 <div class="filter-block">
@@ -71,17 +130,15 @@
                         <label class="sub-label">Subproduto</label>
                         <select name="subproduto" class="sub-select"><option value="Reach">Reach</option><option value="Node">Node</option></select>
                         <label class="sub-label">Continente</label>
-                        <select name="continente" class="sub-select">
-                            <option value="SA" selected>América do Sul (SA)</option>
-                        </select>
+                        <select class="sub-select" disabled><option selected>América do Sul (SA)</option></select>
+                        <input type="hidden" name="continente" value="SA">
                     </div>
                     <div id="sub-lake" class="sub-opts hidden">
                         <label class="sub-label">Tipo</label>
                         <select name="subproduto" class="sub-select"><option value="Prior">Prior</option><option value="Obs">Obs</option><option value="Unassigned">Unassigned</option><option value="Avg">Avg</option></select>
                         <label class="sub-label">Continente</label>
-                        <select name="continente" class="sub-select">
-                            <option value="SA" selected>América do Sul (SA)</option>
-                        </select>
+                        <select class="sub-select" disabled><option selected>América do Sul (SA)</option></select>
+                        <input type="hidden" name="continente" value="SA">
                     </div>
                     <div id="sub-raster" class="sub-opts hidden">
                         <label class="sub-label">Resolução</label>
@@ -92,18 +149,18 @@
                 <div class="filter-block">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
                         <label style="margin: 0;">2. Área de Interesse</label>
-                        <button type="button" class="btn-text" onclick="limparArea()" style="margin: 0; padding: 0; font-size: 0.75rem; color: #dc3545; text-decoration: none; display: flex; align-items: center; gap: 2px;">
+                        <button type="button" class="btn-text" onclick="limparArea()" style="margin: 0; padding: 0; font-size: 0.75rem; color: #dc3545 !important; text-decoration: none; display: flex; align-items: center; gap: 2px;">
                             <span class="material-symbols-outlined" style="font-size: 14px;">delete</span> Limpar Área
                         </button>
                     </div>
                     <div class="aoi-tabs">
-                        <div class="upload-container">
-                            <p style="font-size:0.75rem; color:#666; margin:0 0 5px;">Upload (.zip, .gpkg, .kml, .kmz)</p>
-                            <input type="file" id="userShapeInput" accept=".zip,.gpkg,.kml,.kmz,.json,.geojson" onchange="uploadShape()">
-                            <div id="shapeStatus" style="font-size:0.7rem; color:green; min-height:15px; margin-top:2px;"></div>
+                        <div class="upload-container" style="padding: 5px; margin-bottom: 5px;">
+                            <p style="font-size:0.75rem; margin:0 0 5px;">Upload (.zip, .gpkg, .kml, .kmz)</p>
+                            <input type="file" id="userShapeInput" accept=".zip,.gpkg,.kml,.kmz,.json,.geojson" onchange="uploadShape()" style="font-size: 0.7rem;">
+                            <div id="shapeStatus" style="font-size:0.7rem; color:green; min-height:12px; margin-top:2px;"></div>
                             <input type="hidden" id="uploadedShapeName">
                         </div>
-                        <p style="text-align:center; font-size:0.8rem; margin: 5px 0; color:#999;">— OU —</p>
+                        <p style="text-align:center; font-size:0.75rem; margin: 3px 0;">— OU —</p>
                         <select id="brazil_states" onchange="aplicarFiltroEstado()">
                             <option value="">Selecione um Estado...</option>
                             <option value="BR">BRASIL (Todo)</option>
@@ -113,7 +170,7 @@
                             <optgroup label="Sudeste"><option value="ES">ES</option><option value="MG">MG</option><option value="RJ">RJ</option><option value="SP">SP</option></optgroup>
                             <optgroup label="Sul"><option value="RS">RS</option><option value="SC">SC</option><option value="PR">PR</option></optgroup>
                         </select>
-                        <p style="text-align:center; font-size:0.8rem; margin: 5px 0; color:#999;">— OU DESENHE □ NO MAPA —</p>
+                        <p style="text-align:center; font-size:0.75rem; margin: 3px 0;">— OU DESENHE □ NO MAPA —</p>
                     </div>
                     <div class="coord-grid small-inputs">
                         <input type="number" step="any" id="lat_min" name="lat_min" placeholder="Lat Min" readonly>
@@ -125,7 +182,7 @@
 
                 <div class="filter-block">
                     <label>3. Período</label>
-                    <div id="date-msg" class="date-warning hidden"></div>
+                    <div id="date-msg" class="date-warning hidden" style="padding: 5px; margin-bottom: 5px; font-size: 0.75rem;"></div>
                     <div class="coord-grid">
                         <input type="date" name="start_date" id="start_date" min="2022-02-15" onchange="validarDatas()">
                         <input type="date" name="end_date" id="end_date" min="2022-02-15" onchange="validarDatas()">
@@ -133,7 +190,7 @@
                 </div>
 
                 <div class="filter-block">
-                    <label style="color:#666; font-size:0.8rem;">4. Identificação (Opcional)</label>
+                    <label style="font-size:0.8rem;">4. Identificação (Opcional)</label>
                     <div class="grid-3">
                         <input type="number" name="cycle" placeholder="Cycle">
                         <input type="number" name="pass" placeholder="Pass">
@@ -141,7 +198,7 @@
                     </div>
                 </div>
             </form>
-            <div id="btn-container" style="margin-top:15px;">
+            <div id="btn-container" style="margin-top:10px;">
                 <button type="button" class="btn-aneel" onclick="buscarDados()">Consultar</button>
             </div>
         </div>
@@ -191,8 +248,8 @@
 
         <div id="view-referencias" class="panel-body hidden">
             <h3 class="section-title">Referências Bibliográficas</h3>
-            <div style="text-align: center; margin-top: 50px; color: #666;">
-                <span class="material-symbols-outlined" style="font-size: 48px; color: #f39c12; margin-bottom: 10px;">engineering</span>
+            <div style="text-align: center; margin-top: 50px; color: #003366;">
+                <span class="material-symbols-outlined" style="font-size: 48px; color: #00509e; margin-bottom: 10px;">engineering</span>
                 <p style="font-size: 1.1rem; font-weight: 500; margin: 0;">Estamos em construção</p>
                 <p style="font-size: 0.85rem; margin-top: 5px;">Em breve esta seção será atualizada.</p>
             </div>
@@ -204,7 +261,7 @@
                 <div class="results-summary"><span id="total-count">0</span> arquivos • <span id="total-size">0 MB</span></div>
                 
                 <div class="results-toolbar" style="padding: 8px 10px; border-bottom: 1px solid #eee; background: #fafafa; display: flex; align-items: center;">
-                    <label style="font-weight:normal; font-size:0.85rem; display:flex; align-items:center; cursor:pointer; margin:0; color:#333;">
+                    <label style="font-weight:normal; font-size:0.85rem; display:flex; align-items:center; cursor:pointer; margin:0; color:#003366; font-weight: 600;">
                         <input type="checkbox" id="select-all" onclick="toggleSelectAll()" style="margin-right:8px; cursor: pointer;"> Selecionar Todos
                     </label>
                 </div>
@@ -215,7 +272,7 @@
                 <div id="progress-container" class="loading-overlay hidden">
                     <div class="loader-content">
                         <div class="loader-spinner"></div>
-                        <p style="margin-top: 15px; font-weight: 500; color: #555;">Buscando na NASA...</p>
+                        <p style="margin-top: 15px; font-weight: 500; color: #00509e;">Buscando na NASA...</p>
                     </div>
                     <div class="progress-bar-bg"><div id="progress-fill"></div></div>
                 </div>
@@ -224,7 +281,7 @@
             <button id="btn-download-selected" type="button" class="btn-aneel download hidden" onclick="baixarSelecionados()" disabled>
                 <span class="material-symbols-outlined">download</span> Baixar Selecionados
             </button>
-            <button type="button" class="btn-text" onclick="resetarConsulta()" style="margin-top: 15px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; color: #555;">
+            <button type="button" class="btn-text" onclick="resetarConsulta()" style="margin-top: 15px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; color: #00509e !important;">
                 <span class="material-symbols-outlined" style="font-size: 18px;">refresh</span> Voltar e Iniciar Nova Consulta
             </button>
         </div>
@@ -232,6 +289,7 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

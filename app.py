@@ -8,12 +8,13 @@ import zipfile
 import glob
 import uuid
 import traceback
+import re
 from flask import Flask, render_template, request, jsonify, Response, send_file, after_this_request
 from werkzeug.utils import secure_filename
 import earthaccess
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import shape
+from shapely.geometry import shape, box
 from dotenv import load_dotenv
 
 # --- CONFIGURAÇÃO DE DRIVERS (Fiona) ---
@@ -206,8 +207,9 @@ def get_camada(nome_camada):
         return Response(gdf.to_json(), mimetype='application/json')
     except Exception as e: return jsonify({"error": str(e)}), 500
 
+
 # =======================================================
-# BUSCA E DOWNLOAD (SISTEMA DE PESQUISA FUZZY BLINDADO)
+# BUSCA COM INTERSEÇÃO GEOGRÁFICA (MÁSCARA REAL)
 # =======================================================
 @app.route('/buscar_dados', methods=['POST'])
 def buscar_dados():
@@ -217,22 +219,20 @@ def buscar_dados():
         start_date = d.get('start_date')
         end_date = d.get('end_date')
         
-        if not start_date or not end_date: return jsonify({"status": "error", "message": "Selecione o período."}), 400
+        if not start_date or not end_date: 
+            return jsonify({"status": "error", "message": "Selecione o período."}), 400
         
         short_name = ""
         subproduto_str = ""
         
-        # 1. Identifica a Coleção Oficial da NASA
         if prod == 'RiverSP':
             short_name = "SWOT_L2_HR_RiverSP_D"
             sub = d.get('subproduto')
             if sub: subproduto_str = sub
-            
         elif prod == 'LakeSP':
             short_name = "SWOT_L2_HR_LakeSP_D"
             sub = d.get('subproduto')
             if sub: subproduto_str = sub
-            
         elif prod in COLLECTIONS_BASE:
             short_name = COLLECTIONS_BASE[prod]
             if prod == 'Raster': 
@@ -241,71 +241,162 @@ def buscar_dados():
         else: 
             return jsonify({"status": "error", "message": "Produto inválido"}), 400
 
-        # 2. Constrói o Padrão de Busca Infalível (Usando '*')
-        parts = []
-        
-        if subproduto_str: 
-            parts.append(subproduto_str)
-            
-        cycle_val = d.get('cycle')
-        if cycle_val and str(cycle_val).strip() != "": 
-            parts.append(str(cycle_val).strip().zfill(3))
-            
-        pass_val = d.get('pass')
-        if pass_val and str(pass_val).strip() != "": 
-            parts.append(str(pass_val).strip().zfill(3))
+        cycle_val = str(d.get('cycle', '')).strip().zfill(3) if str(d.get('cycle', '')).strip() else "*"
+        pass_val = str(d.get('pass', '')).strip().zfill(3) if str(d.get('pass', '')).strip() else "*"
+        tile_val = str(d.get('tile', '')).strip() if str(d.get('tile', '')).strip() else "*"
+        cont_val = d.get('continente') if d.get('continente') else "SA"
 
-        tile_val = d.get('tile')
-        if tile_val and str(tile_val).strip() != "":
-            parts.append(str(tile_val).strip())
-            
-        continente = d.get('continente')
-        if continente and ('SP' in prod): 
-            parts.append(continente)
-            
-        # Junta tudo criando uma busca fuzzy "indestrutível" (Ex: *Reach*044*005*SA*)
-        core_pattern = "*".join(parts)
-        granule_pattern = f"*{core_pattern}*"
-        
-        # Limpa duplos asteriscos que confundem a API
-        while "**" in granule_pattern:
-            granule_pattern = granule_pattern.replace("**", "*")
+        mask_name = d.get('shape_filename')
+        state_uf = d.get('state_uf')
 
-        # 3. Empacota a requisição de forma limpa (Ocultando vazios)
-        search_kwargs = {
-            "short_name": short_name,
-            "granule_name": granule_pattern
-        }
-        
-        if start_date and end_date:
-            search_kwargs["temporal"] = (start_date, end_date)
-            
-        # Envia a área de interesse APENAS se ela de fato existir
+        bbox_geom = None
         if d.get('lon_min') and str(d.get('lon_min')).strip() != "":
             try:
-                bbox = (float(d['lon_min']), float(d['lat_min']), float(d['lon_max']), float(d['lat_max']))
-                search_kwargs["bounding_box"] = bbox
+                bbox_geom = box(float(d['lon_min']), float(d['lat_min']), float(d['lon_max']), float(d['lat_max']))
             except: pass
 
-        results = []
-        for i in range(3):
-            try:
-                results = earthaccess.search_data(**search_kwargs)
-                break 
-            except Exception: time.sleep(1)
+        # 3. INTERSEÇÃO INTELIGENTE COM A GEOMETRIA REAL (ESTADO OU SHAPE)
+        passes_encontrados = []
+        tiles_encontrados = []
+        usou_smart_filter = False
 
-        fmt = []
+        if (bbox_geom or mask_name or state_uf) and pass_val == "*" and tile_val == "*":
+            try:
+                gdf_mask = None
+                
+                # Tenta pegar a geometria exata do Shapefile enviado
+                if mask_name:
+                    mask_path = os.path.join(app.config['UPLOAD_FOLDER'], mask_name)
+                    if os.path.exists(mask_path):
+                        gdf_mask, tmp = carregar_geodataframe(mask_path)
+                
+                # Tenta pegar a geometria exata do Estado selecionado
+                elif state_uf and state_uf != 'BR':
+                    caminhos_possiveis = [
+                        os.path.join(BASE_DIR, 'camadas', 'BR_UF_2024.shp'), 
+                        os.path.join(BASE_DIR, 'camadas', 'BR_Estados.gpkg'),
+                        os.path.join(BASE_DIR, 'camadas', 'BR_Estados.geojson'),
+                        os.path.join(BASE_DIR, 'camadas', 'BR_Estados.shp')
+                    ]
+                    caminho_arquivo = next((cp for cp in caminhos_possiveis if os.path.exists(cp)), None)
+                    if caminho_arquivo:
+                        gdf_full = gpd.read_file(caminho_arquivo)
+                        col_uf = next((c for c in gdf_full.columns if gdf_full[c].astype(str).str.strip().str.upper().eq(state_uf.upper()).any()), None)
+                        if col_uf:
+                            gdf_mask = gdf_full[gdf_full[col_uf].astype(str).str.strip().str.upper() == state_uf.upper()].copy()
+
+                # Se não tem forma complexa, usa o quadrado do Bounding Box desenhado na tela
+                if gdf_mask is None or gdf_mask.empty:
+                    if bbox_geom:
+                        gdf_mask = gpd.GeoDataFrame(geometry=[bbox_geom], crs="EPSG:4326")
+                    else:
+                        raise Exception("Sem geometria válida")
+                else:
+                    if gdf_mask.crs is None: gdf_mask.set_crs(epsg=4326, inplace=True)
+                    else: gdf_mask = gdf_mask.to_crs("EPSG:4326")
+
+                # Cruzamento com Órbitas ou Grades
+                if prod in ['RiverSP', 'LakeSP']:
+                    caminho_orbits = os.path.join(BASE_DIR, 'camadas', 'SWOT_orbits_BR.gpkg')
+                    if os.path.exists(caminho_orbits):
+                        usou_smart_filter = True
+                        gdf_orbits = gpd.read_file(caminho_orbits)
+                        if gdf_orbits.crs and gdf_orbits.crs.to_string() != "EPSG:4326":
+                            gdf_orbits = gdf_orbits.to_crs("EPSG:4326")
+                        
+                        intersecao = gpd.overlay(gdf_orbits, gdf_mask, how='intersection')
+                        if not intersecao.empty:
+                            pass_col = next((c for c in intersecao.columns if 'pass' in c.lower() or 'track' in c.lower()), intersecao.columns[0])
+                            for p in intersecao[pass_col].astype(str):
+                                nums = re.findall(r'\d+', p)
+                                if nums: passes_encontrados.append(nums[0].zfill(3))
+                            passes_encontrados = list(set(passes_encontrados))
+
+                elif prod in ['PIXC', 'Raster']:
+                    caminho_tiles = os.path.join(BASE_DIR, 'camadas', 'SWOT_tiles_BR.gpkg')
+                    if os.path.exists(caminho_tiles):
+                        usou_smart_filter = True
+                        gdf_tiles = gpd.read_file(caminho_tiles)
+                        if gdf_tiles.crs and gdf_tiles.crs.to_string() != "EPSG:4326":
+                            gdf_tiles = gdf_tiles.to_crs("EPSG:4326")
+                        
+                        intersecao = gpd.overlay(gdf_tiles, gdf_mask, how='intersection')
+                        if not intersecao.empty:
+                            tile_col = next((c for c in intersecao.columns if 'tile' in c.lower()), intersecao.columns[0])
+                            tiles_encontrados = intersecao[tile_col].astype(str).unique().tolist()
+
+            except Exception as e:
+                print("Aviso: Falha na interseção inteligente local.", traceback.format_exc())
+                usou_smart_filter = False
+
+        # 4. Geração dos Padrões de Nome (Granule Name)
+        patterns = []
+        sub = subproduto_str if subproduto_str else "*"
+
+        if usou_smart_filter:
+            if prod in ['RiverSP', 'LakeSP'] and not passes_encontrados:
+                return jsonify({"status": "success", "results": []})
+            if prod in ['PIXC', 'Raster'] and not tiles_encontrados:
+                return jsonify({"status": "success", "results": []})
+            
+            if prod in ['RiverSP', 'LakeSP']:
+                for p in passes_encontrados:
+                    patterns.append(f"*_{sub}_{cycle_val}_{p}_{cont_val}_*".replace("**", "*"))
+            elif prod in ['PIXC', 'Raster']:
+                for t in tiles_encontrados:
+                    if prod == 'Raster': patterns.append(f"*_{sub}_{cycle_val}_{pass_val}_{t}_*".replace("**", "*"))
+                    else: patterns.append(f"*_{cycle_val}_{pass_val}_{t}_*".replace("**", "*"))
+        else:
+            if prod in ['RiverSP', 'LakeSP']:
+                patterns.append(f"*_{sub}_{cycle_val}_{pass_val}_{cont_val}_*".replace("**", "*"))
+            elif prod == 'Raster':
+                patterns.append(f"*_{sub}_{cycle_val}_{pass_val}_{tile_val}_*".replace("**", "*"))
+            elif prod == 'PIXC':
+                patterns.append(f"*_{cycle_val}_{pass_val}_{tile_val}_*".replace("**", "*"))
+
+        if len(patterns) > 50:
+            patterns = [patterns[-1].replace(patterns[-1].split('_')[-2], '*')]
+
+        # 5. Configurando a Busca Geral
+        t_start = f"{start_date}T00:00:00"
+        t_end = f"{end_date}T23:59:59"
+        
+        base_kwargs = {
+            "short_name": short_name,
+            "temporal": (t_start, t_end),
+            "count": 3000
+        }
+        
+        if bbox_geom:
+            base_kwargs["bounding_box"] = (float(d['lon_min']), float(d['lat_min']), float(d['lon_max']), float(d['lat_max']))
+
+        results = []
+        for pat in patterns:
+            try:
+                search_kwargs = base_kwargs.copy()
+                search_kwargs["granule_name"] = pat
+                for i in range(3):
+                    try:
+                        res = earthaccess.search_data(**search_kwargs)
+                        results.extend(res)
+                        break
+                    except: time.sleep(1)
+            except: pass
+
+        fmt_dict = {}
         for r in results:
             try:
                 meta = r['meta']
                 filename = meta.get('native-id', meta.get('producer-granule-id', 'unknown'))
-                size_val = r.size() if r.size() else 0
-                fmt.append({"filename": filename, "size": f"{round(size_val, 2)}", "download_link": r.data_links(access="external")[0]})
+                if filename not in fmt_dict:
+                    size_val = r.size() if r.size() else 0
+                    fmt_dict[filename] = {"filename": filename, "size": f"{round(size_val, 2)}", "download_link": r.data_links(access="external")[0]}
             except: pass
 
-        return jsonify({"status": "success", "results": fmt})
+        return jsonify({"status": "success", "results": list(fmt_dict.values())})
 
     except Exception as e: return jsonify({"status": "error", "message": str(e)}), 500
+
 
 @app.route('/baixar_selecionados', methods=['POST'])
 def baixar_selecionados():
@@ -327,6 +418,7 @@ def baixar_selecionados():
             except: pass
         return jsonify({"status": "success", "message": f"Download concluído: {sucessos} arquivos."})
     except Exception as e: return jsonify({"status": "error", "message": str(e)}), 500
+
 
 @app.route('/download_cropped', methods=['POST'])
 def download_cropped():
@@ -410,7 +502,8 @@ def download_cropped():
                 try: clipped = gpd.clip(gdf_data, gdf_mask)
                 except Exception: return jsonify({'error': 'Erro geométrico no recorte.'}), 400
 
-                if clipped.empty: return jsonify({'error': 'Sem sobreposição na área.'}), 400
+                if clipped.empty: 
+                    return jsonify({'status': 'no_data', 'message': 'Sem dados na AE'})
                 
                 out_shp_dir = os.path.join(tmpdirname, "out")
                 os.makedirs(out_shp_dir, exist_ok=True)
@@ -430,7 +523,8 @@ def download_cropped():
                     path_final_persistente += ".nc"
                     clipped.to_netcdf(path_final_persistente)
                     mimetype = 'application/x-netcdf'
-                except Exception as e: return jsonify({'error': f"Erro NetCDF: {str(e)}"}), 500
+                except Exception as e: 
+                    return jsonify({'status': 'no_data', 'message': 'Sem dados na AE'})
             
             else:
                 gdf_data = gpd.read_file(short_input)
@@ -438,7 +532,8 @@ def download_cropped():
                 gdf_data.geometry = gdf_data.geometry.make_valid()
                 
                 clipped = gpd.clip(gdf_data, gdf_mask)
-                if clipped.empty: return jsonify({'error': 'Sem sobreposição.'}), 400
+                if clipped.empty: 
+                    return jsonify({'status': 'no_data', 'message': 'Sem dados na AE'})
                 
                 path_final_persistente += ext_orig
                 driv = 'GeoJSON'
