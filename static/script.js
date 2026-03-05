@@ -262,7 +262,6 @@ function buscarDados() {
     void bar.offsetWidth; 
     bar.classList.add('progress-filling');
 
-    // Capturando o Estado e o Shape para a busca Híbrida
     const formData = new FormData(document.getElementById('searchForm'));
     const reqData = Object.fromEntries(formData);
     reqData['shape_filename'] = document.getElementById('uploadedShapeName').value;
@@ -357,13 +356,52 @@ function baixarSelecionados() {
     const willCrop = shapeName || (stateUF && stateUF !== 'BR');
     const btn = document.querySelector('.btn-aneel.download');
     
+    // --- 1. SOMA O TAMANHO DOS ARQUIVOS SELECIONADOS ---
+    let totalSizeMB = 0;
+    cbs.forEach(cb => {
+        const sizeDiv = cb.closest('.result-info').querySelector('.result-size');
+        if (sizeDiv) {
+            const text = sizeDiv.innerText || sizeDiv.textContent;
+            const match = text.match(/([\d.]+)\s*MB/);
+            if (match && match[1]) {
+                totalSizeMB += parseFloat(match[1]);
+            }
+        }
+    });
+
+    let sizeDisplay = "";
+    if (totalSizeMB >= 1024) {
+        sizeDisplay = (totalSizeMB / 1024).toFixed(2) + " GB";
+    } else {
+        sizeDisplay = totalSizeMB.toFixed(2) + " MB";
+    }
+    // ---------------------------------------------------
+
     if(willCrop) {
-        if(!confirm(`Você selecionou ${cbs.length} arquivos para recorte.\n\nO sistema vai baixar, recortar e salvar um por um no seu computador. Isso pode demorar.\n\nDeseja continuar?`)) return;
+        alert(`Você selecionou ${cbs.length} arquivos com ${sizeDisplay}.\nO sistema irá recortar para sua área de interesse e baixar!`);
         
         btn.disabled = true;
         const textoOriginal = btn.innerHTML;
         btn.innerHTML = '<span class="material-symbols-outlined">hourglass_empty</span> Processando Recortes...';
         
+        const prod = document.getElementById('produto').value;
+        let sub = "Dados";
+        if (prod === 'RiverSP') sub = document.querySelector('#sub-river select[name="subproduto"]').value;
+        else if (prod === 'LakeSP') sub = document.querySelector('#sub-lake select[name="subproduto"]').value;
+        else if (prod === 'Raster') sub = document.querySelector('#sub-raster select[name="resolucao"]').value;
+        else if (prod === 'PIXC') sub = "Nuvem";
+
+        let areaNome = "AreaLivre";
+        if (shapeName) {
+            areaNome = shapeName.split('.').slice(0, -1).join('.'); 
+            areaNome = areaNome.replace(/[^a-zA-Z0-9_-]/g, ''); 
+        } else if (stateUF && stateUF !== 'BR') {
+            areaNome = stateUF;
+        }
+
+        const dataHoje = new Date().toISOString().split('T')[0]; 
+        const nomeFinalZip = `SWOT_${prod}_${sub}_${areaNome}_${dataHoje}`;
+
         const tarefas = Array.from(cbs).map(c => ({
             url: c.value,
             statusId: c.id.replace('cb-', 'status-'),
@@ -371,11 +409,13 @@ function baixarSelecionados() {
             state: (stateUF !== 'BR') ? stateUF : ''
         }));
         
-        processarFilaDownloads(tarefas, btn, textoOriginal);
+        processarFilaDownloads(tarefas, btn, textoOriginal, nomeFinalZip);
         return;
     }
 
     if(btn) {
+        alert(`Você selecionou ${cbs.length} arquivos com ${sizeDisplay}.\nO sistema irá baixar os arquivos originais!`);
+
         btn.disabled = true;
         const textoOriginal = btn.innerHTML;
         btn.innerHTML = '<span class="material-symbols-outlined">hourglass_empty</span> Baixando...';
@@ -397,7 +437,9 @@ function baixarSelecionados() {
     }
 }
 
-async function processarFilaDownloads(tarefas, btn, textoOriginal) {
+async function processarFilaDownloads(tarefas, btn, textoOriginal, nomeFinalZip) {
+    let zip = new JSZip();
+    
     let relatorio = "========================================\n";
     relatorio += "   RELATÓRIO DE DOWNLOAD - SWOT NASA    \n";
     relatorio += "========================================\n";
@@ -413,7 +455,12 @@ async function processarFilaDownloads(tarefas, btn, textoOriginal) {
         relatorio += `> Arquivo: ${nomeArquivo}\n`;
         relatorio += `  Status:  ${resultado.msg}\n\n`;
         
-        if(resultado.tipo === 'salvo') contagens.salvos++;
+        if(resultado.tipo === 'salvo') {
+            contagens.salvos++;
+            if (resultado.blob && resultado.nomeFinal) {
+                zip.file(resultado.nomeFinal, resultado.blob);
+            }
+        }
         else if(resultado.tipo === 'vazio') contagens.vazios++;
         else contagens.erros++;
     }
@@ -421,16 +468,25 @@ async function processarFilaDownloads(tarefas, btn, textoOriginal) {
     relatorio += "========================================\n";
     relatorio += `RESUMO:\n- Baixados com sucesso: ${contagens.salvos}\n- Sem sobreposição na área de interesse: ${contagens.vazios}\n- Falhas no processamento: ${contagens.erros}\n`;
 
+    zip.file("Relatorio_SWOT.txt", relatorio);
+
+    btn.innerHTML = '<span class="material-symbols-outlined">inventory_2</span> Compactando ZIP...';
+
+    try {
+        const content = await zip.generateAsync({type:"blob"});
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(content);
+        a.download = `${nomeFinalZip}.zip`;
+        a.click();
+        
+        alert("Processamento concluído!\nTodos os arquivos e o relatório foram compactados em um único arquivo .ZIP.");
+    } catch (e) {
+        alert("Erro ao gerar o arquivo ZIP final.");
+        console.error(e);
+    }
+
     btn.disabled = false;
     btn.innerHTML = textoOriginal;
-    
-    const blob = new Blob([relatorio], { type: "text/plain;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "Relatorio_SWOT.txt";
-    a.click();
-
-    alert("Processamento concluído!\nUm arquivo .TXT com o relatório do download foi gerado para você.");
 }
 
 async function baixarRecortado(url, statusId, shape, stateUF) {
@@ -467,8 +523,6 @@ async function baixarRecortado(url, statusId, shape, stateUF) {
             }
             
             const blob = await r.blob();
-            const a = document.createElement('a');
-            a.href = window.URL.createObjectURL(blob);
             
             let nomeOriginal = url.split('/').pop().split('?')[0];
             let nomeSemExtensao = nomeOriginal.substring(0, nomeOriginal.lastIndexOf('.')) || nomeOriginal;
@@ -479,11 +533,14 @@ async function baixarRecortado(url, statusId, shape, stateUF) {
             else if(u.includes('.nc')) ext = ".nc"; 
             else if(u.includes('.gpkg')) ext = ".gpkg";
             
-            a.download = `recorte_${nomeSemExtensao}${ext}`;
-            a.click();
-            
             if(statusSpan) { statusSpan.innerText = "✅ Salvo"; statusSpan.style.color = "green"; }
-            return { tipo: 'salvo', msg: 'Recorte efetuado e salvo com sucesso.' };
+            
+            return { 
+                tipo: 'salvo', 
+                msg: 'Recorte efetuado e salvo com sucesso.', 
+                blob: blob, 
+                nomeFinal: `recorte_${nomeSemExtensao}${ext}`
+            };
             
         } else {
             const err = await r.json(); 
