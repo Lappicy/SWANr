@@ -106,7 +106,6 @@ def upload_user_shape():
     if file.filename == '': return jsonify({'error': 'Nome do arquivo vazio.'}), 400
 
     filename = secure_filename(file.filename)
-    
     if filename.lower().endswith('.shp'):
         return jsonify({'error': 'Um arquivo .shp não funciona sozinho! Por favor, compacte todos os arquivos do shapefile (.shp, .shx, .dbf, .prj) em um arquivo .ZIP e faça o upload.'}), 400
 
@@ -156,7 +155,7 @@ def get_estado_limits(uf_sigla):
                 break
                 
         if not caminho_arquivo:
-            return jsonify({"error": "Arquivo de estados (BR_UF_2024.shp ou similar) não encontrado na pasta 'camadas'."}), 404
+            return jsonify({"error": "Arquivo de estados não encontrado na pasta 'camadas'."}), 404
 
         gdf = gpd.read_file(caminho_arquivo)
         
@@ -166,35 +165,28 @@ def get_estado_limits(uf_sigla):
                 coluna_uf = col
                 break
 
-        if not coluna_uf:
-            return jsonify({"error": f"A sigla '{uf}' não foi encontrada em nenhuma coluna do shapefile."}), 400
+        if not coluna_uf: return jsonify({"error": f"Sigla '{uf}' não encontrada."}), 400
 
         gdf_estado = gdf[gdf[coluna_uf].astype(str).str.strip().str.upper() == uf].copy()
-
-        if gdf_estado.empty:
-            return jsonify({"error": f"Estado {uf} não encontrado no arquivo."}), 404
+        if gdf_estado.empty: return jsonify({"error": f"Estado {uf} não encontrado."}), 404
 
         if gdf_estado.crs and gdf_estado.crs.to_string() != "EPSG:4326":
             gdf_estado = gdf_estado.to_crs("EPSG:4326")
 
         gdf_estado['geometry'] = gdf_estado['geometry'].simplify(0.005)
-
         bounds = gdf_estado.total_bounds 
         geojson_data = json.loads(gdf_estado.to_json())
         
         res = {"bbox": [bounds[0], bounds[1], bounds[2], bounds[3]], "geojson": geojson_data}
         CACHE_ESTADOS[uf] = res
         return jsonify(res)
-        
-    except Exception as e: 
-        return jsonify({"error": str(e)}), 500
+    except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route('/camadas/<nome_camada>')
 def get_camada(nome_camada):
     try:
         nome_arquivo = f"{nome_camada}.gpkg"
         caminho_arquivo = os.path.join('camadas', nome_arquivo)
-        
         if not os.path.exists(caminho_arquivo): return jsonify({"error": "Camada não encontrada."}), 404
 
         gdf = gpd.read_file(caminho_arquivo)
@@ -209,7 +201,8 @@ def get_camada(nome_camada):
 
 
 # =======================================================
-# BUSCA COM INTERSEÇÃO GEOGRÁFICA (MÁSCARA REAL)
+# BUSCA COM INTERSEÇÃO ESPACIAL APRIMORADA (SOMENTE GRADES/TILES)
+# PRECISÃO MÁXIMA - SEM SIMPLIFICAÇÃO
 # =======================================================
 @app.route('/buscar_dados', methods=['POST'])
 def buscar_dados():
@@ -255,7 +248,6 @@ def buscar_dados():
                 bbox_geom = box(float(d['lon_min']), float(d['lat_min']), float(d['lon_max']), float(d['lat_max']))
             except: pass
 
-        # 3. INTERSEÇÃO INTELIGENTE COM A GEOMETRIA REAL (ESTADO OU SHAPE)
         passes_encontrados = []
         tiles_encontrados = []
         usou_smart_filter = False
@@ -264,13 +256,10 @@ def buscar_dados():
             try:
                 gdf_mask = None
                 
-                # Tenta pegar a geometria exata do Shapefile enviado
                 if mask_name:
                     mask_path = os.path.join(app.config['UPLOAD_FOLDER'], mask_name)
                     if os.path.exists(mask_path):
                         gdf_mask, tmp = carregar_geodataframe(mask_path)
-                
-                # Tenta pegar a geometria exata do Estado selecionado
                 elif state_uf and state_uf != 'BR':
                     caminhos_possiveis = [
                         os.path.join(BASE_DIR, 'camadas', 'BR_UF_2024.shp'), 
@@ -285,7 +274,6 @@ def buscar_dados():
                         if col_uf:
                             gdf_mask = gdf_full[gdf_full[col_uf].astype(str).str.strip().str.upper() == state_uf.upper()].copy()
 
-                # Se não tem forma complexa, usa o quadrado do Bounding Box desenhado na tela
                 if gdf_mask is None or gdf_mask.empty:
                     if bbox_geom:
                         gdf_mask = gpd.GeoDataFrame(geometry=[bbox_geom], crs="EPSG:4326")
@@ -294,70 +282,77 @@ def buscar_dados():
                 else:
                     if gdf_mask.crs is None: gdf_mask.set_crs(epsg=4326, inplace=True)
                     else: gdf_mask = gdf_mask.to_crs("EPSG:4326")
+                    
+                    
 
-                # Cruzamento com Órbitas ou Grades
-                if prod in ['RiverSP', 'LakeSP']:
-                    caminho_orbits = os.path.join(BASE_DIR, 'camadas', 'SWOT_orbits_BR.gpkg')
-                    if os.path.exists(caminho_orbits):
-                        usou_smart_filter = True
-                        gdf_orbits = gpd.read_file(caminho_orbits)
-                        if gdf_orbits.crs and gdf_orbits.crs.to_string() != "EPSG:4326":
-                            gdf_orbits = gdf_orbits.to_crs("EPSG:4326")
-                        
-                        intersecao = gpd.overlay(gdf_orbits, gdf_mask, how='intersection')
-                        if not intersecao.empty:
-                            pass_col = next((c for c in intersecao.columns if 'pass' in c.lower() or 'track' in c.lower()), intersecao.columns[0])
-                            for p in intersecao[pass_col].astype(str):
-                                nums = re.findall(r'\d+', p)
-                                if nums: passes_encontrados.append(nums[0].zfill(3))
-                            passes_encontrados = list(set(passes_encontrados))
-
-                elif prod in ['PIXC', 'Raster']:
-                    caminho_tiles = os.path.join(BASE_DIR, 'camadas', 'SWOT_tiles_BR.gpkg')
-                    if os.path.exists(caminho_tiles):
-                        usou_smart_filter = True
-                        gdf_tiles = gpd.read_file(caminho_tiles)
+                
+                caminho_tiles = os.path.join(BASE_DIR, 'camadas', 'SWOT_tiles_BR.gpkg')
+                if os.path.exists(caminho_tiles):
+                    usou_smart_filter = True
+                    
+                    gdf_tiles = gpd.read_file(caminho_tiles)
+                    
+                    if not gdf_tiles.empty:
                         if gdf_tiles.crs and gdf_tiles.crs.to_string() != "EPSG:4326":
                             gdf_tiles = gdf_tiles.to_crs("EPSG:4326")
                         
-                        intersecao = gpd.overlay(gdf_tiles, gdf_mask, how='intersection')
+                        # Sjoin preciso (cruza Grades com o Mapa do usuário)
+                        intersecao = gpd.sjoin(gdf_tiles, gdf_mask, how="inner", predicate="intersects")
+                        
                         if not intersecao.empty:
-                            tile_col = next((c for c in intersecao.columns if 'tile' in c.lower()), intersecao.columns[0])
-                            tiles_encontrados = intersecao[tile_col].astype(str).unique().tolist()
+                            pass_col = next((c for c in intersecao.columns if 'pass' in c.lower()), None)
+                            tile_col = next((c for c in intersecao.columns if 'tile' in c.lower()), None)
+
+                            if prod in ['RiverSP', 'LakeSP'] and pass_col:
+                                for p in intersecao[pass_col].astype(str):
+                                    nums = re.findall(r'\d+', p)
+                                    if nums: passes_encontrados.append(nums[0].zfill(3))
+                                passes_encontrados = list(set(passes_encontrados))
+
+                            elif prod in ['PIXC', 'Raster'] and tile_col:
+                                if pass_col: 
+                                    for _, row in intersecao.iterrows():
+                                        p_val = str(row[pass_col])
+                                        t_val = str(row[tile_col])
+                                        p_nums = re.findall(r'\d+', p_val)
+                                        if p_nums and t_val:
+                                            tiles_encontrados.append((p_nums[0].zfill(3), t_val))
+                                    tiles_encontrados = list(set(tiles_encontrados))
+                                else: 
+                                    tiles_encontrados = intersecao[tile_col].astype(str).unique().tolist()
 
             except Exception as e:
-                print("Aviso: Falha na interseção inteligente local.", traceback.format_exc())
+                print("Aviso: Falha na interseção inteligente.", traceback.format_exc())
                 usou_smart_filter = False
 
-        # 4. Geração dos Padrões de Nome (Granule Name)
+        # 4. Construção dos padrões de arquivo para o EarthAccess
         patterns = []
         sub = subproduto_str if subproduto_str else "*"
 
         if usou_smart_filter:
-            if prod in ['RiverSP', 'LakeSP'] and not passes_encontrados:
-                return jsonify({"status": "success", "results": []})
-            if prod in ['PIXC', 'Raster'] and not tiles_encontrados:
-                return jsonify({"status": "success", "results": []})
+            if prod in ['RiverSP', 'LakeSP']:
+                if not passes_encontrados: return jsonify({"status": "success", "results": []})
+                for p in passes_encontrados: patterns.append(f"*_{sub}_{cycle_val}_{p}_{cont_val}_*".replace("**", "*"))
             
-            if prod in ['RiverSP', 'LakeSP']:
-                for p in passes_encontrados:
-                    patterns.append(f"*_{sub}_{cycle_val}_{p}_{cont_val}_*".replace("**", "*"))
             elif prod in ['PIXC', 'Raster']:
-                for t in tiles_encontrados:
-                    if prod == 'Raster': patterns.append(f"*_{sub}_{cycle_val}_{pass_val}_{t}_*".replace("**", "*"))
-                    else: patterns.append(f"*_{cycle_val}_{pass_val}_{t}_*".replace("**", "*"))
+                if not tiles_encontrados: return jsonify({"status": "success", "results": []})
+                for t_item in tiles_encontrados:
+                    if isinstance(t_item, tuple): 
+                        p_ext, t_ext = t_item
+                        if prod == 'Raster': patterns.append(f"*_{sub}_{cycle_val}_{p_ext}_{t_ext}_*".replace("**", "*"))
+                        else: patterns.append(f"*_{cycle_val}_{p_ext}_{t_ext}_*".replace("**", "*"))
+                    else: 
+                        if prod == 'Raster': patterns.append(f"*_{sub}_{cycle_val}_{pass_val}_{t_item}_*".replace("**", "*"))
+                        else: patterns.append(f"*_{cycle_val}_{pass_val}_{t_item}_*".replace("**", "*"))
         else:
-            if prod in ['RiverSP', 'LakeSP']:
-                patterns.append(f"*_{sub}_{cycle_val}_{pass_val}_{cont_val}_*".replace("**", "*"))
-            elif prod == 'Raster':
-                patterns.append(f"*_{sub}_{cycle_val}_{pass_val}_{tile_val}_*".replace("**", "*"))
-            elif prod == 'PIXC':
-                patterns.append(f"*_{cycle_val}_{pass_val}_{tile_val}_*".replace("**", "*"))
+            if prod in ['RiverSP', 'LakeSP']: patterns.append(f"*_{sub}_{cycle_val}_{pass_val}_{cont_val}_*".replace("**", "*"))
+            elif prod == 'Raster': patterns.append(f"*_{sub}_{cycle_val}_{pass_val}_{tile_val}_*".replace("**", "*"))
+            elif prod == 'PIXC': patterns.append(f"*_{cycle_val}_{pass_val}_{tile_val}_*".replace("**", "*"))
 
-        if len(patterns) > 50:
-            patterns = [patterns[-1].replace(patterns[-1].split('_')[-2], '*')]
+        # OTIMIZAÇÃO DE TIMEOUT
+        if len(patterns) > 30:
+            patterns = []
 
-        # 5. Configurando a Busca Geral
         t_start = f"{start_date}T00:00:00"
         t_end = f"{end_date}T23:59:59"
         
@@ -371,8 +366,8 @@ def buscar_dados():
             base_kwargs["bounding_box"] = (float(d['lon_min']), float(d['lat_min']), float(d['lon_max']), float(d['lat_max']))
 
         results = []
-        for pat in patterns:
-            try:
+        if patterns:
+            for pat in patterns:
                 search_kwargs = base_kwargs.copy()
                 search_kwargs["granule_name"] = pat
                 for i in range(3):
@@ -380,8 +375,14 @@ def buscar_dados():
                         res = earthaccess.search_data(**search_kwargs)
                         results.extend(res)
                         break
-                    except: time.sleep(1)
-            except: pass
+                    except Exception: time.sleep(1)
+        else:
+            for i in range(3):
+                try:
+                    res = earthaccess.search_data(**base_kwargs)
+                    results.extend(res)
+                    break
+                except Exception: time.sleep(1)
 
         fmt_dict = {}
         for r in results:
@@ -434,12 +435,10 @@ def download_cropped():
 
     tmp_mask_dir = None
     try:
-        # Se for Upload do usuário
         if mask_name:
             mask_path = os.path.join(app.config['UPLOAD_FOLDER'], mask_name)
             gdf_mask, tmp_mask_dir = carregar_geodataframe(mask_path)
             
-        # Se for seleção de Estado
         elif state_uf:
             caminhos_possiveis = [
                 os.path.join(BASE_DIR, 'camadas', 'BR_UF_2024.shp'), 
@@ -461,12 +460,10 @@ def download_cropped():
                     coluna_uf = col
                     break
                     
-            if not coluna_uf:
-                return jsonify({"error": f"A sigla '{uf_upper}' não foi encontrada na malha."}), 400
+            if not coluna_uf: return jsonify({"error": f"A sigla '{uf_upper}' não foi encontrada na malha."}), 400
                 
             gdf_mask = gdf_full[gdf_full[coluna_uf].astype(str).str.strip().str.upper() == uf_upper].copy()
-            if gdf_mask.empty:
-                return jsonify({"error": "Geometria do estado vazia ou não encontrada."}), 404
+            if gdf_mask.empty: return jsonify({"error": "Geometria do estado vazia ou não encontrada."}), 404
         
         if gdf_mask.crs is None: gdf_mask.set_crs(epsg=4326, inplace=True)
         else: gdf_mask = gdf_mask.to_crs("EPSG:4326")
@@ -523,7 +520,7 @@ def download_cropped():
                     path_final_persistente += ".nc"
                     clipped.to_netcdf(path_final_persistente)
                     mimetype = 'application/x-netcdf'
-                except Exception as e: 
+                except Exception: 
                     return jsonify({'status': 'no_data', 'message': 'Sem dados na AE'})
             
             else:
