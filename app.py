@@ -201,8 +201,7 @@ def get_camada(nome_camada):
 
 
 # =======================================================
-# BUSCA COM INTERSEÇÃO ESPACIAL APRIMORADA (SOMENTE GRADES/TILES)
-# PRECISÃO MÁXIMA - SEM SIMPLIFICAÇÃO
+# BUSCA COM INTERSEÇÃO 
 # =======================================================
 @app.route('/buscar_dados', methods=['POST'])
 def buscar_dados():
@@ -322,7 +321,7 @@ def buscar_dados():
                                     tiles_encontrados = intersecao[tile_col].astype(str).unique().tolist()
 
             except Exception as e:
-                print("Aviso: Falha na interseção inteligente.", traceback.format_exc())
+                print("Aviso: Falha na interseção.", traceback.format_exc())
                 usou_smart_filter = False
 
         # 4. Construção dos padrões de arquivo para o EarthAccess

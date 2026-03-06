@@ -61,6 +61,7 @@
             border-top-left-radius: 8px; 
             border-top-right-radius: 8px;
             padding-top: 5px !important;
+            overflow-y: auto;
         }
         
         .panel-body { padding: 5px 15px 10px 15px !important; }
@@ -74,6 +75,44 @@
         .aneel-panel .layer-label { color: #003366 !important; font-weight: 600 !important; }
         .aneel-panel p { color: #00509e !important; }
         .aneel-panel .btn-text { color: #dc3545 !important; } 
+
+        /* ========================================================
+           CONTROLE DE ESCALA E COORDENADAS (Canto Inferior Esquerdo)
+           ======================================================== */
+        .leaflet-bottom.leaflet-left { 
+            margin-bottom: 15px !important; 
+            margin-left: 360px !important; 
+        }
+        
+        .coord-display {
+            background-color: #6a7b83; 
+            color: #ffffff;
+            padding: 4px 8px;
+            font-size: 13px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            border-radius: 2px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+            margin-top: 5px !important;
+            pointer-events: none; 
+            line-height: 1;
+        }
+        
+        .coord-display .material-symbols-outlined {
+            font-size: 15px;
+            border-right: 1px solid rgba(255,255,255,0.4);
+            padding-right: 6px;
+        }
+
+        .leaflet-control-scale-line {
+            background: rgba(255, 255, 255, 0.5) !important;
+            text-shadow: 1px 1px 1px #fff, -1px -1px 1px #fff, 1px -1px 1px #fff, -1px 1px 1px #fff;
+            color: #333;
+            font-weight: 600;
+            border-color: #555;
+        }
     </style>
 </head>
 <body>
@@ -90,6 +129,13 @@
             </div>
             <div class="nav-item" id="nav-camadas" onclick="switchTab('camadas')">
                 <span class="material-symbols-outlined">layers</span> Camadas
+            </div>
+            
+            <div class="nav-item" id="nav-manual" onclick="switchTab('manual')">
+                <span class="material-symbols-outlined">help_center</span> Manual
+            </div>
+            <div class="nav-item" id="nav-projeto" onclick="switchTab('projeto')">
+                <span class="material-symbols-outlined">info</span> Projeto
             </div>
             <div class="nav-item" id="nav-referencias" onclick="switchTab('referencias')">
                 <span class="material-symbols-outlined">menu_book</span> Referências
@@ -243,6 +289,24 @@
                     <span class="slider round"></span>
                 </label>
                 <span class="layer-label">Grades (Tiles)</span>
+            </div>
+        </div>
+
+        <div id="view-manual" class="panel-body hidden">
+            <h3 class="section-title">Manual do Usuário</h3>
+            <div style="text-align: center; margin-top: 50px; color: #003366;">
+                <span class="material-symbols-outlined" style="font-size: 48px; color: #00509e; margin-bottom: 10px;">help_center</span>
+                <p style="font-size: 1.1rem; font-weight: 500; margin: 0;">Como utilizar a Plataforma</p>
+                <p style="font-size: 0.85rem; margin-top: 5px;">Em breve disponibilizaremos o guia passo a passo.</p>
+            </div>
+        </div>
+
+        <div id="view-projeto" class="panel-body hidden">
+            <h3 class="section-title">Sobre o Projeto</h3>
+            <div style="text-align: center; margin-top: 50px; color: #003366;">
+                <span class="material-symbols-outlined" style="font-size: 48px; color: #00509e; margin-bottom: 10px;">lightbulb</span>
+                <p style="font-size: 1.1rem; font-weight: 500; margin: 0;">Informações do Projeto</p>
+                <p style="font-size: 0.85rem; margin-top: 5px;">Detalhes sobre os objetivos, parceiros e equipe.</p>
             </div>
         </div>
 
