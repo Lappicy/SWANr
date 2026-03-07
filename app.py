@@ -281,21 +281,16 @@ def buscar_dados():
                 else:
                     if gdf_mask.crs is None: gdf_mask.set_crs(epsg=4326, inplace=True)
                     else: gdf_mask = gdf_mask.to_crs("EPSG:4326")
-                    
-                    
 
-                
                 caminho_tiles = os.path.join(BASE_DIR, 'camadas', 'SWOT_tiles_BR.gpkg')
                 if os.path.exists(caminho_tiles):
                     usou_smart_filter = True
-                    
                     gdf_tiles = gpd.read_file(caminho_tiles)
                     
                     if not gdf_tiles.empty:
                         if gdf_tiles.crs and gdf_tiles.crs.to_string() != "EPSG:4326":
                             gdf_tiles = gdf_tiles.to_crs("EPSG:4326")
                         
-                        # Sjoin preciso (cruza Grades com o Mapa do usuário)
                         intersecao = gpd.sjoin(gdf_tiles, gdf_mask, how="inner", predicate="intersects")
                         
                         if not intersecao.empty:
@@ -321,10 +316,9 @@ def buscar_dados():
                                     tiles_encontrados = intersecao[tile_col].astype(str).unique().tolist()
 
             except Exception as e:
-                print("Aviso: Falha na interseção.", traceback.format_exc())
+                print("Aviso: Falha na interseção inteligente.", traceback.format_exc())
                 usou_smart_filter = False
 
-        # 4. Construção dos padrões de arquivo para o EarthAccess
         patterns = []
         sub = subproduto_str if subproduto_str else "*"
 
@@ -348,7 +342,6 @@ def buscar_dados():
             elif prod == 'Raster': patterns.append(f"*_{sub}_{cycle_val}_{pass_val}_{tile_val}_*".replace("**", "*"))
             elif prod == 'PIXC': patterns.append(f"*_{cycle_val}_{pass_val}_{tile_val}_*".replace("**", "*"))
 
-        # OTIMIZAÇÃO DE TIMEOUT
         if len(patterns) > 30:
             patterns = []
 
