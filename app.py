@@ -201,7 +201,7 @@ def get_camada(nome_camada):
 
 
 # =======================================================
-# BUSCA COM INTERSEÇÃO 
+# BUSCA COM INTERSEÇÃO ESPACIAL APRIMORADA (SOMENTE GRADES/TILES)
 # =======================================================
 @app.route('/buscar_dados', methods=['POST'])
 def buscar_dados():
@@ -419,19 +419,28 @@ def download_cropped():
     url = d.get('granule_url')
     mask_name = d.get('shape_filename')
     state_uf = d.get('state_uf')
+    
+    # Captura as coordenadas do Bounding Box desenhado (se houver)
+    lon_min = d.get('lon_min')
+    lat_min = d.get('lat_min')
+    lon_max = d.get('lon_max')
+    lat_max = d.get('lat_max')
 
-    if not url or (not mask_name and not state_uf): 
-        return jsonify({'error': 'Dados incompletos. Informe um shape ou um estado.'}), 400
+    has_bbox = all(v is not None and str(v).strip() != "" for v in [lon_min, lat_min, lon_max, lat_max])
+
+    if not url or (not mask_name and not state_uf and not has_bbox): 
+        return jsonify({'error': 'Dados incompletos. Informe um shape, um estado ou desenhe uma área no mapa.'}), 400
     if not auth: 
         return jsonify({'error': 'Falha no login da NASA. Verifique credenciais.'}), 500
 
     tmp_mask_dir = None
     try:
+        gdf_mask = None
         if mask_name:
             mask_path = os.path.join(app.config['UPLOAD_FOLDER'], mask_name)
             gdf_mask, tmp_mask_dir = carregar_geodataframe(mask_path)
             
-        elif state_uf:
+        elif state_uf and state_uf != 'BR':
             caminhos_possiveis = [
                 os.path.join(BASE_DIR, 'camadas', 'BR_UF_2024.shp'), 
                 os.path.join(BASE_DIR, 'camadas', 'BR_Estados.gpkg'),
@@ -456,6 +465,14 @@ def download_cropped():
                 
             gdf_mask = gdf_full[gdf_full[coluna_uf].astype(str).str.strip().str.upper() == uf_upper].copy()
             if gdf_mask.empty: return jsonify({"error": "Geometria do estado vazia ou não encontrada."}), 404
+            
+        # suporte ao recorte via desenho
+        elif has_bbox:
+            bbox_geom = box(float(lon_min), float(lat_min), float(lon_max), float(lat_max))
+            gdf_mask = gpd.GeoDataFrame(geometry=[bbox_geom], crs="EPSG:4326")
+
+        if gdf_mask is None or gdf_mask.empty:
+            return jsonify({"error": "Máscara de recorte inválida ou vazia."}), 400
         
         if gdf_mask.crs is None: gdf_mask.set_crs(epsg=4326, inplace=True)
         else: gdf_mask = gdf_mask.to_crs("EPSG:4326")

@@ -60,11 +60,12 @@
             height: calc(100vh - 95px) !important; 
             border-top-left-radius: 8px; 
             border-top-right-radius: 8px;
-            padding-top: 5px !important;
+            padding-top: 0px !important; 
             overflow-y: auto;
         }
         
-        .panel-body { padding: 5px 15px 10px 15px !important; }
+        .panel-body { padding: 15px 15px 10px 15px !important; }
+        .panel-body form > .filter-block:first-child { margin-top: 0 !important; }
         .filter-block { margin-bottom: 12px !important; }
         .filter-block label { margin-bottom: 3px !important; } 
         .section-title { margin-top: 10px !important; margin-bottom: 8px !important; }
@@ -77,11 +78,23 @@
         .aneel-panel .btn-text { color: #dc3545 !important; } 
 
         /* ========================================================
-           CONTROLE DE ESCALA E COORDENADAS (Canto Inferior Esquerdo)
+           CONTROLE DE ESCALA E COORDENADAS 
            ======================================================== */
         .leaflet-bottom.leaflet-left { 
             margin-bottom: 15px !important; 
             margin-left: 360px !important; 
+        }
+        
+        .leaflet-control-scale { margin-bottom: 4px !important; }
+        .leaflet-control-scale-line {
+            background: transparent !important; 
+            border: 2px solid #333 !important;
+            border-top: none !important;
+            color: #333 !important;
+            font-weight: 700 !important;
+            font-size: 12px !important;
+            text-shadow: 1px 1px 1px #fff, -1px -1px 1px #fff, 1px -1px 1px #fff, -1px 1px 1px #fff !important;
+            box-sizing: border-box;
         }
         
         .coord-display {
@@ -95,7 +108,6 @@
             align-items: center;
             gap: 6px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-            margin-top: 5px !important;
             pointer-events: none; 
             line-height: 1;
         }
@@ -106,13 +118,68 @@
             padding-right: 6px;
         }
 
-        .leaflet-control-scale-line {
-            background: rgba(255, 255, 255, 0.5) !important;
-            text-shadow: 1px 1px 1px #fff, -1px -1px 1px #fff, 1px -1px 1px #fff, -1px 1px 1px #fff;
-            color: #333;
-            font-weight: 600;
-            border-color: #555;
+        /* ========================================================
+           PAINEL LATERAL DO MANUAL (Lado Direito)
+           ======================================================== */
+        .manual-panel {
+            position: fixed;
+            top: 75px;
+            right: -400px; /* Fica escondido fora da tela por padrão */
+            width: 360px;
+            height: calc(100vh - 95px);
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: -2px 4px 15px rgba(0,0,0,0.15);
+            z-index: 2500;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid #ddd;
+            transition: right 0.3s ease-in-out; /* Animação de deslizamento */
         }
+        .manual-panel.open {
+            right: 15px; /* Quando aberto, desliza para dentro da tela */
+        }
+        .manual-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 15px;
+            background-color: #f0f6fa;
+            border-bottom: 2px solid #00509e;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+        }
+        .manual-header h3 {
+            margin: 0;
+            color: #003366;
+            font-size: 1.1rem;
+            flex-grow: 1;
+        }
+        .manual-header .material-symbols-outlined { color: #00509e; }
+        .manual-header .close-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: #dc3545;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            transition: 0.2s;
+        }
+        .manual-header .close-btn:hover { color: #a71d2a; transform: scale(1.1); }
+        .manual-body {
+            padding: 20px;
+            overflow-y: auto;
+            flex-grow: 1;
+            color: #444;
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+        .manual-body h4 { color: #00509e; margin-top: 0; margin-bottom: 10px; font-size: 1rem; }
+        .manual-body p { margin-bottom: 12px; }
+        .manual-body ul { padding-left: 20px; margin-bottom: 15px;}
+        .manual-body li { margin-bottom: 8px;}
     </style>
 </head>
 <body>
@@ -131,9 +198,10 @@
                 <span class="material-symbols-outlined">layers</span> Camadas
             </div>
             
-            <div class="nav-item" id="nav-manual" onclick="switchTab('manual')">
+            <div class="nav-item" id="nav-manual" onclick="toggleManual()">
                 <span class="material-symbols-outlined">help_center</span> Manual
             </div>
+
             <div class="nav-item" id="nav-projeto" onclick="switchTab('projeto')">
                 <span class="material-symbols-outlined">info</span> Projeto
             </div>
@@ -293,15 +361,6 @@
             </div>
         </div>
 
-        <div id="view-manual" class="panel-body hidden">
-            <h3 class="section-title">Manual do Usuário</h3>
-            <div style="text-align: center; margin-top: 50px; color: #003366;">
-                <span class="material-symbols-outlined" style="font-size: 48px; color: #00509e; margin-bottom: 10px;">help_center</span>
-                <p style="font-size: 1.1rem; font-weight: 500; margin: 0;">Como utilizar a Plataforma</p>
-                <p style="font-size: 0.85rem; margin-top: 5px;">Em breve disponibilizaremos o guia passo a passo.</p>
-            </div>
-        </div>
-
         <div id="view-projeto" class="panel-body hidden">
             <h3 class="section-title">Sobre o Projeto</h3>
             <div style="text-align: center; margin-top: 50px; color: #003366;">
@@ -352,9 +411,32 @@
         </div>
     </div>
 
+    <div id="manual-panel" class="manual-panel">
+        <div class="manual-header">
+            <span class="material-symbols-outlined">help_center</span>
+            <h3>Manual do Usuário</h3>
+            <button class="close-btn" onclick="toggleManual()" title="Fechar">
+                <span class="material-symbols-outlined">close</span>
+            </button>
+        </div>
+        <div class="manual-body">
+            <h4>Como utilizar a Plataforma</h4>
+            <p>Siga os passos abaixo para realizar o download dos dados do satélite SWOT:</p>
+            <ul>
+                <li><b>Passo 1:</b> Na aba de <i>Consulta</i> (lado esquerdo), selecione o Produto e Subproduto desejado.</li>
+                <li><b>Passo 2:</b> Defina sua Área de Interesse. Você pode fazer upload de um shapefile (.zip), selecionar um Estado, ou desenhar um retângulo diretamente no mapa.</li>
+                <li><b>Passo 3:</b> Escolha a Data Inicial e a Data Final da sua busca.</li>
+                <li><b>Passo 4:</b> Clique em Consultar. O sistema buscará os arquivos nos servidores da NASA e os listará na aba de Resultados.</li>
+                <li><b>Passo 5:</b> Selecione os arquivos desejados e clique em Baixar. Uma janela se abrirá para você escolher onde salvar o pacote compactado.</li>
+            </ul>
+            <p><i>Dica: Você pode manter este manual aberto enquanto preenche os dados na aba de consultas ao lado!</i></p>
+        </div>
+    </div>
+
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="{{ url_for('static', filename='script.js') }}?v=3"></script>
 </body>
 </html>

@@ -46,6 +46,9 @@ document.getElementById('map').style.cursor = 'pointer';
 function startLoading() { document.getElementById('map').classList.add('map-loading'); }
 function stopLoading() { document.getElementById('map').classList.remove('map-loading'); }
 
+// ========================================================
+// CONTROLE DE ABAS E PAINÉIS
+// ========================================================
 function switchTab(t) {
     const p = document.getElementById('main-panel');
     const clickedNav = document.getElementById('nav-'+t);
@@ -64,11 +67,27 @@ function switchTab(t) {
         e.style.display = ''; 
     });
     
-    document.querySelectorAll('.nav-item').forEach(e => e.classList.remove('active'));
+    // ATENÇÃO AQUI: Remove o active de todos, EXCETO do botão do Manual
+    document.querySelectorAll('.nav-item:not(#nav-manual)').forEach(e => e.classList.remove('active'));
     
     document.getElementById('view-'+t).classList.remove('hidden');
     if(clickedNav) clickedNav.classList.add('active');
 }
+
+// FUNÇÃO NOVA: Abre e fecha o Painel Lateral do Manual
+function toggleManual() {
+    const panel = document.getElementById('manual-panel');
+    const btn = document.getElementById('nav-manual');
+    
+    if(panel.classList.contains('open')) {
+        panel.classList.remove('open');
+        btn.classList.remove('active');
+    } else {
+        panel.classList.add('open');
+        btn.classList.add('active');
+    }
+}
+// ========================================================
 
 function resetarConsulta() {
     document.getElementById('searchForm').reset();
@@ -317,7 +336,8 @@ function buscarDados() {
         
         const shapeName = document.getElementById('uploadedShapeName').value;
         const stateUF = document.getElementById('brazil_states').value;
-        const willCrop = shapeName || (stateUF && stateUF !== 'BR');
+        const latMinVal = document.getElementById('lat_min').value;
+        const willCrop = shapeName || (stateUF && stateUF !== 'BR') || latMinVal !== "";
         
         if(btnDown) {
             btnDown.classList.remove('hidden');
@@ -385,7 +405,8 @@ function baixarSelecionados() {
     
     const shapeName = document.getElementById('uploadedShapeName').value;
     const stateUF = document.getElementById('brazil_states').value;
-    const willCrop = shapeName || (stateUF && stateUF !== 'BR');
+    const latMinVal = document.getElementById('lat_min').value;
+    const willCrop = shapeName || (stateUF && stateUF !== 'BR') || latMinVal !== "";
     const btn = document.querySelector('.btn-aneel.download');
     
     let totalSizeMB = 0;
@@ -408,20 +429,42 @@ function baixarSelecionados() {
     }
 
     if(willCrop) {
-        alert(`Você selecionou ${cbs.length} arquivos com ${sizeDisplay}.\nO sistema irá recortar para sua área de interesse e salvar na pasta selecionada.`);
+        alert(`Você selecionou ${cbs.length} arquivos com ${sizeDisplay}.\nO sistema irá recortar para sua Área de Interesse e compactar tudo em um único arquivo .ZIP`);
         
         btn.disabled = true;
         const textoOriginal = btn.innerHTML;
         btn.innerHTML = '<span class="material-symbols-outlined">hourglass_empty</span> Processando Recortes...';
         
+        const prod = document.getElementById('produto').value;
+        let sub = "Dados";
+        if (prod === 'RiverSP') sub = document.querySelector('#sub-river select[name="subproduto"]').value;
+        else if (prod === 'LakeSP') sub = document.querySelector('#sub-lake select[name="subproduto"]').value;
+        else if (prod === 'Raster') sub = document.querySelector('#sub-raster select[name="resolucao"]').value;
+        else if (prod === 'PIXC') sub = "Nuvem";
+
+        let areaNome = "AreaLivre";
+        if (shapeName) {
+            areaNome = shapeName.split('.').slice(0, -1).join('.'); 
+            areaNome = areaNome.replace(/[^a-zA-Z0-9_-]/g, ''); 
+        } else if (stateUF && stateUF !== 'BR') {
+            areaNome = stateUF;
+        }
+
+        const dataHoje = new Date().toISOString().split('T')[0]; 
+        const nomeFinalZip = `SWOT_${prod}_${sub}_${areaNome}_${dataHoje}`;
+
         const tarefas = Array.from(cbs).map(c => ({
             url: c.value,
             statusId: c.id.replace('cb-', 'status-'),
             shape: shapeName,
-            state: (stateUF !== 'BR') ? stateUF : ''
+            state: (stateUF !== 'BR') ? stateUF : '',
+            lon_min: document.getElementById('lon_min').value,
+            lat_min: document.getElementById('lat_min').value,
+            lon_max: document.getElementById('lon_max').value,
+            lat_max: document.getElementById('lat_max').value
         }));
         
-        processarFilaDownloads(tarefas, btn, textoOriginal);
+        processarFilaDownloads(tarefas, btn, textoOriginal, nomeFinalZip);
         return;
     }
 
@@ -449,7 +492,6 @@ function baixarSelecionados() {
     }
 }
 
-// Helper para forçar o download clássico se a pessoa rejeitar a pasta
 function baixarBlob(blob, nome) {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -457,7 +499,29 @@ function baixarBlob(blob, nome) {
     a.click();
 }
 
-async function processarFilaDownloads(tarefas, btn, textoOriginal) {
+async function processarFilaDownloads(tarefas, btn, textoOriginal, nomeFinalZip) {
+    let fileHandle = null;
+
+    if (window.showSaveFilePicker) {
+        try {
+            fileHandle = await window.showSaveFilePicker({
+                suggestedName: `${nomeFinalZip}.zip`,
+                types: [{
+                    description: 'Arquivo Compactado ZIP',
+                    accept: {'application/zip': ['.zip']},
+                }],
+            });
+        } catch (saveErr) {
+            if (saveErr.name !== 'AbortError') console.error(saveErr);
+            btn.disabled = false;
+            btn.innerHTML = textoOriginal;
+            return; 
+        }
+    } else {
+        alert("Atenção: O sistema vai processar e salvar automaticamente na sua pasta 'Downloads' padrão.");
+    }
+
+    let zip = new JSZip();
     let relatorio = "========================================\n";
     relatorio += "   RELATÓRIO DE DOWNLOAD - SWOT NASA    \n";
     relatorio += "========================================\n";
@@ -465,25 +529,9 @@ async function processarFilaDownloads(tarefas, btn, textoOriginal) {
     relatorio += "Total de arquivos processados: " + tarefas.length + "\n\n";
 
     let contagens = { salvos: 0, vazios: 0, erros: 0 };
-    let dirHandle = null;
-
-    // API MODERNA: Pede ao usuário para escolher UMA pasta para salvar todos os arquivos!
-    if (window.showDirectoryPicker) {
-        try {
-            dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-        } catch (err) {
-            // Se o usuário cancelar a escolha da pasta, encerramos o processo
-            if (err.name !== 'AbortError') console.error(err);
-            btn.disabled = false;
-            btn.innerHTML = textoOriginal;
-            return; 
-        }
-    } else {
-        alert("O seu navegador não suporta a escolha de pastas. Os arquivos serão baixados individualmente para a sua pasta 'Downloads' padrão.");
-    }
 
     for (const t of tarefas) { 
-        let resultado = await baixarRecortado(t.url, t.statusId, t.shape, t.state); 
+        let resultado = await baixarRecortado(t.url, t.statusId, t.shape, t.state, t.lon_min, t.lat_min, t.lon_max, t.lat_max); 
         let nomeArquivo = t.url.split('/').pop().split('?')[0];
         
         relatorio += `> Arquivo: ${nomeArquivo}\n`;
@@ -492,21 +540,7 @@ async function processarFilaDownloads(tarefas, btn, textoOriginal) {
         if(resultado.tipo === 'salvo') {
             contagens.salvos++;
             if (resultado.blob && resultado.nomeFinal) {
-                // Se a pessoa escolheu a pasta, grava o arquivo direto lá dentro silenciosamente
-                if (dirHandle) {
-                    try {
-                        const fileHandle = await dirHandle.getFileHandle(resultado.nomeFinal, { create: true });
-                        const writable = await fileHandle.createWritable();
-                        await writable.write(resultado.blob);
-                        await writable.close();
-                    } catch(e) {
-                        // Se der erro ao escrever na pasta, dispara o download comum
-                        baixarBlob(resultado.blob, resultado.nomeFinal);
-                    }
-                } else {
-                    // Sem suporte a escolher pasta, faz o download comum
-                    baixarBlob(resultado.blob, resultado.nomeFinal);
-                }
+                zip.file(resultado.nomeFinal, resultado.blob);
             }
         }
         else if(resultado.tipo === 'vazio') contagens.vazios++;
@@ -516,27 +550,29 @@ async function processarFilaDownloads(tarefas, btn, textoOriginal) {
     relatorio += "========================================\n";
     relatorio += `RESUMO:\n- Baixados com sucesso: ${contagens.salvos}\n- Sem sobreposição: ${contagens.vazios}\n- Falhas no processamento: ${contagens.erros}\n`;
 
-    // Grava o arquivo de Relatório .txt na mesma pasta no final de tudo
-    const relatorioBlob = new Blob([relatorio], { type: "text/plain;charset=utf-8" });
-    if (dirHandle) {
-        try {
-            const fileHandle = await dirHandle.getFileHandle("Relatorio_SWOT.txt", { create: true });
+    zip.file("Relatorio_SWOT.txt", relatorio);
+    btn.innerHTML = '<span class="material-symbols-outlined">inventory_2</span> Salvando ZIP...';
+
+    try {
+        const content = await zip.generateAsync({type:"blob"});
+        if (fileHandle) {
             const writable = await fileHandle.createWritable();
-            await writable.write(relatorioBlob);
+            await writable.write(content);
             await writable.close();
-        } catch(e) {
-            baixarBlob(relatorioBlob, "Relatorio_SWOT.txt");
+        } else {
+            baixarBlob(content, `${nomeFinalZip}.zip`);
         }
-    } else {
-        baixarBlob(relatorioBlob, "Relatorio_SWOT.txt");
+        alert("Processamento concluído!\nTodos os arquivos e o relatório foram compactados e salvos.");
+    } catch (e) {
+        alert("Erro ao finalizar a gravação do arquivo ZIP.");
+        console.error(e);
     }
 
-    alert("Processamento concluído!\nTodos os arquivos selecionados e o relatório foram salvos com sucesso.");
     btn.disabled = false;
     btn.innerHTML = textoOriginal;
 }
 
-async function baixarRecortado(url, statusId, shape, stateUF) {
+async function baixarRecortado(url, statusId, shape, stateUF, lon_min, lat_min, lon_max, lat_max) {
     const statusSpan = document.getElementById(statusId);
 
     if(statusSpan) {
@@ -548,6 +584,12 @@ async function baixarRecortado(url, statusId, shape, stateUF) {
         const reqBody = { granule_url: url };
         if (shape) reqBody.shape_filename = shape;
         if (stateUF) reqBody.state_uf = stateUF;
+        if (lon_min !== "") {
+            reqBody.lon_min = lon_min;
+            reqBody.lat_min = lat_min;
+            reqBody.lon_max = lon_max;
+            reqBody.lat_max = lat_max;
+        }
 
         const r = await fetch('/download_cropped', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
