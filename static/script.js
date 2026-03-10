@@ -6,9 +6,6 @@ var labels = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z
 satellite.addTo(map); labels.addTo(map);
 L.control.zoom({ position: 'topright' }).addTo(map);
 
-// ========================================================
-// ESCALA E RASTREADOR DE COORDENADAS
-// ========================================================
 L.control.scale({ position: 'bottomleft', metric: true, imperial: true }).addTo(map);
 
 var CoordControl = L.Control.extend({
@@ -27,7 +24,6 @@ map.on('mousemove', function(e) {
     const coordSpan = document.getElementById('map-coords');
     if(coordSpan) coordSpan.innerText = `${lng} ${lat} Graus`;
 });
-// ========================================================
 
 function trocarBasemap(tipo) {
     if(tipo === 'sat') {
@@ -46,9 +42,6 @@ document.getElementById('map').style.cursor = 'pointer';
 function startLoading() { document.getElementById('map').classList.add('map-loading'); }
 function stopLoading() { document.getElementById('map').classList.remove('map-loading'); }
 
-// ========================================================
-// CONTROLE DE ABAS E PAINÉIS
-// ========================================================
 function switchTab(t) {
     const p = document.getElementById('main-panel');
     const clickedNav = document.getElementById('nav-'+t);
@@ -67,14 +60,12 @@ function switchTab(t) {
         e.style.display = ''; 
     });
     
-    // ATENÇÃO AQUI: Remove o active de todos, EXCETO do botão do Manual
     document.querySelectorAll('.nav-item:not(#nav-manual)').forEach(e => e.classList.remove('active'));
     
     document.getElementById('view-'+t).classList.remove('hidden');
     if(clickedNav) clickedNav.classList.add('active');
 }
 
-// FUNÇÃO NOVA: Abre e fecha o Painel Lateral do Manual
 function toggleManual() {
     const panel = document.getElementById('manual-panel');
     const btn = document.getElementById('nav-manual');
@@ -87,7 +78,6 @@ function toggleManual() {
         btn.classList.add('active');
     }
 }
-// ========================================================
 
 function resetarConsulta() {
     document.getElementById('searchForm').reset();
@@ -433,7 +423,7 @@ function baixarSelecionados() {
         
         btn.disabled = true;
         const textoOriginal = btn.innerHTML;
-        btn.innerHTML = '<span class="material-symbols-outlined">hourglass_empty</span> Processando Recortes...';
+        btn.innerHTML = '<span class="material-symbols-outlined">hourglass_empty</span> Preparando...';
         
         const prod = document.getElementById('produto').value;
         let sub = "Dados";
@@ -518,8 +508,10 @@ async function processarFilaDownloads(tarefas, btn, textoOriginal, nomeFinalZip)
             return; 
         }
     } else {
-        alert("Atenção: O sistema vai processar e salvar automaticamente na sua pasta 'Downloads' padrão.");
+        alert("Atenção: Seu navegador não suporta escolha de pasta. O arquivo irá para 'Downloads'.");
     }
+
+    btn.innerHTML = '<span class="material-symbols-outlined">hourglass_empty</span> Processando Recortes...';
 
     let zip = new JSZip();
     let relatorio = "========================================\n";
@@ -559,10 +551,10 @@ async function processarFilaDownloads(tarefas, btn, textoOriginal, nomeFinalZip)
             const writable = await fileHandle.createWritable();
             await writable.write(content);
             await writable.close();
+            alert("Processamento concluído!\nArquivo ZIP salvo com sucesso na pasta escolhida.");
         } else {
             baixarBlob(content, `${nomeFinalZip}.zip`);
         }
-        alert("Processamento concluído!\nTodos os arquivos e o relatório foram compactados e salvos.");
     } catch (e) {
         alert("Erro ao finalizar a gravação do arquivo ZIP.");
         console.error(e);
