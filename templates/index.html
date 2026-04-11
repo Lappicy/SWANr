@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard SWOT (Coleção D)</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" />
+</head>
+<body>
+
+    <!-- ===== NAVBAR ===== -->
+    <div class="top-navbar">
+        <div class="nav-brand">
+            <span class="material-symbols-outlined nav-icon">waves</span>
+            <span>SWOT Download</span>
+            <span class="nav-subtitle">(Coleção D)</span>
+        </div>
+        <div class="nav-menu">
+            <div class="nav-item active" id="nav-swot" onclick="switchTab('swot')">
+                <span class="material-symbols-outlined">search</span> Consulta
+            </div>
+            <div class="nav-item" id="nav-camadas" onclick="switchTab('camadas')">
+                <span class="material-symbols-outlined">layers</span> Camadas
+            </div>
+            <div class="nav-item" id="nav-manual" onclick="toggleManual()">
+                <span class="material-symbols-outlined">help_center</span> Manual
+            </div>
+            <div class="nav-item" id="nav-projeto" onclick="switchTab('projeto')">
+                <span class="material-symbols-outlined">info</span> Projeto
+            </div>
+            <div class="nav-item" id="nav-referencias" onclick="switchTab('referencias')">
+                <span class="material-symbols-outlined">menu_book</span> Referências
+            </div>
+            <div class="nav-item disabled" id="nav-resultados" onclick="switchTab('resultados')">
+                <span class="material-symbols-outlined">list_alt</span> Resultados
+            </div>
+            <div style="width:1px; height:35px; background:#ccc; margin:0 5px;"></div>
+            <div class="nav-item nav-dropdown" title="Mapas Base">
+                <span class="material-symbols-outlined">public</span>
+                <div class="dropdown-content">
+                    <label><input type="radio" name="basemap_sel" value="sat" checked onchange="trocarBasemap('sat')"> Satélite</label>
+                    <label><input type="radio" name="basemap_sel" value="street" onchange="trocarBasemap('street')"> Ruas</label>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== MAPA ===== -->
+    <div id="map"></div>
+
+    <!-- ===== PAINEL PRINCIPAL ===== -->
+    <div class="aneel-panel" id="main-panel">
+
+        <!-- ABA: CONSULTA -->
+        <div id="view-swot" class="panel-body">
+            <form id="searchForm">
+                <div class="filter-block">
+                    <label>1. Produto (Coleção D)</label>
+                    <select id="produto" name="produto" onchange="toggleSubproducts()">
+                        <option value="" disabled selected>Selecione...</option>
+                        <option value="RiverSP">SWOT_L2_HR_RiverSP_D</option>
+                        <option value="LakeSP">SWOT_L2_HR_LakeSP_D</option>
+                        <option value="PIXC">SWOT_L2_HR_PIXC_D</option>
+                        <option value="Raster">SWOT_L2_HR_Raster_D</option>
+                    </select>
+
+                    <div id="sub-river" class="sub-opts hidden">
+                        <label class="sub-label">Subproduto</label>
+                        <select name="subproduto" class="sub-select">
+                            <option value="Reach">Reach</option>
+                            <option value="Node">Node</option>
+                        </select>
+                        <label class="sub-label">Continente</label>
+                        <select class="sub-select" disabled><option selected>América do Sul (SA)</option></select>
+                        <input type="hidden" name="continente" value="SA">
+                    </div>
+                    <div id="sub-lake" class="sub-opts hidden">
+                        <label class="sub-label">Tipo</label>
+                        <select name="subproduto" class="sub-select">
+                            <option value="Prior">Prior</option>
+                            <option value="Obs">Obs</option>
+                            <option value="Unassigned">Unassigned</option>
+                            <option value="Avg">Avg</option>
+                        </select>
+                        <label class="sub-label">Continente</label>
+                        <select class="sub-select" disabled><option selected>América do Sul (SA)</option></select>
+                        <input type="hidden" name="continente" value="SA">
+                    </div>
+                    <div id="sub-raster" class="sub-opts hidden">
+                        <label class="sub-label">Resolução</label>
+                        <select name="resolucao" class="sub-select">
+                            <option value="100m">100m</option>
+                            <option value="250m">250m</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="filter-block">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
+                        <label style="margin:0;">2. Área de Interesse</label>
+                        <button type="button" class="btn-text" onclick="limparArea()"
+                            style="margin:0; padding:0; font-size:0.75rem; text-decoration:none; display:flex; align-items:center; gap:2px;">
+                            <span class="material-symbols-outlined" style="font-size:14px;">delete</span> Limpar Área
+                        </button>
+                    </div>
+                    <div class="aoi-tabs">
+                        <div class="upload-container" style="padding:5px; margin-bottom:5px;">
+                            <p style="font-size:0.75rem; margin:0 0 5px;">Upload (.zip, .gpkg, .kml, .kmz)</p>
+                            <input type="file" id="userShapeInput"
+                                accept=".zip,.gpkg,.kml,.kmz,.json,.geojson"
+                                onchange="uploadShape()" style="font-size:0.7rem;">
+                            <div id="shapeStatus" style="font-size:0.7rem; color:green; min-height:12px; margin-top:2px;"></div>
+                            <input type="hidden" id="uploadedShapeName">
+                        </div>
+                        <p style="text-align:center; font-size:0.75rem; margin:3px 0;">— OU —</p>
+                        <select id="brazil_states" onchange="aplicarFiltroEstado()">
+                            <option value="">Selecione um Estado...</option>
+                            <option value="BR">BRASIL (Todo)</option>
+                            <optgroup label="Centro-Oeste">
+                                <option value="DF">DF</option><option value="GO">GO</option>
+                                <option value="MT">MT</option><option value="MS">MS</option>
+                            </optgroup>
+                            <optgroup label="Norte">
+                                <option value="AC">AC</option><option value="AP">AP</option>
+                                <option value="AM">AM</option><option value="PA">PA</option>
+                                <option value="RO">RO</option><option value="RR">RR</option>
+                                <option value="TO">TO</option>
+                            </optgroup>
+                            <optgroup label="Nordeste">
+                                <option value="AL">AL</option><option value="BA">BA</option>
+                                <option value="CE">CE</option><option value="MA">MA</option>
+                                <option value="PB">PB</option><option value="PE">PE</option>
+                                <option value="PI">PI</option><option value="RN">RN</option>
+                                <option value="SE">SE</option>
+                            </optgroup>
+                            <optgroup label="Sudeste">
+                                <option value="ES">ES</option><option value="MG">MG</option>
+                                <option value="RJ">RJ</option><option value="SP">SP</option>
+                            </optgroup>
+                            <optgroup label="Sul">
+                                <option value="RS">RS</option><option value="SC">SC</option>
+                                <option value="PR">PR</option>
+                            </optgroup>
+                        </select>
+                        <p style="text-align:center; font-size:0.75rem; margin:3px 0;">— OU DESENHE □ NO MAPA —</p>
+                    </div>
+                    <div class="coord-grid small-inputs">
+                        <input type="number" step="any" id="lat_min" name="lat_min" placeholder="Lat Min" readonly>
+                        <input type="number" step="any" id="lat_max" name="lat_max" placeholder="Lat Max" readonly>
+                        <input type="number" step="any" id="lon_min" name="lon_min" placeholder="Lon Min" readonly>
+                        <input type="number" step="any" id="lon_max" name="lon_max" placeholder="Lon Max" readonly>
+                    </div>
+                </div>
+
+                <div class="filter-block">
+                    <label>3. Período</label>
+                    <div id="date-msg" class="date-warning hidden" style="padding:5px; margin-bottom:5px; font-size:0.75rem;"></div>
+                    <div class="coord-grid">
+                        <input type="date" name="start_date" id="start_date" min="2022-02-15" onchange="validarDatas()">
+                        <input type="date" name="end_date" id="end_date" min="2022-02-15" onchange="validarDatas()">
+                    </div>
+                </div>
+
+                <div class="filter-block">
+                    <label style="font-size:0.8rem;">4. Identificação (Opcional)</label>
+                    <div class="grid-3">
+                        <input type="number" name="cycle" placeholder="Cycle">
+                        <input type="number" name="pass" placeholder="Pass">
+                        <input type="text" name="tile" placeholder="Tile">
+                    </div>
+                </div>
+            </form>
+
+            <div id="btn-container" style="margin-top:10px;">
+                <button type="button" class="btn-aneel" onclick="buscarDados()">
+                    <span class="material-symbols-outlined">search</span> Consultar
+                </button>
+            </div>
+        </div>
+
+        <!-- ABA: CAMADAS -->
+        <div id="view-camadas" class="panel-body hidden">
+            <h3 class="section-title">Limites</h3>
+            <div class="layer-item">
+                <label class="switch">
+                    <input type="checkbox" onchange="toggleCamada(this, 'limites_BR', 'Limites do Brasil', '#000', 'linha')">
+                    <span class="slider round"></span>
+                </label>
+                <span class="layer-label">Limites do Brasil</span>
+            </div>
+
+            <h3 class="section-title">ANA (Referência)</h3>
+            <div class="layer-item">
+                <label class="switch">
+                    <input type="checkbox" onchange="toggleCamada(this, 'Estacoes_hidrometeorologicas_ANA', 'Estações ANA', '#0099FF', 'ponto')">
+                    <span class="slider round"></span>
+                </label>
+                <span class="layer-label">Estações Hidrometeorológicas</span>
+            </div>
+            <div class="layer-item">
+                <label class="switch">
+                    <input type="checkbox" onchange="toggleCamada(this, 'SNIRH_OttobaciaNv1', 'Ottobacias N1', '#FFD700', 'linha')">
+                    <span class="slider round"></span>
+                </label>
+                <span class="layer-label">Ottobacias (Nível 1)</span>
+            </div>
+
+            <h3 class="section-title">SWOT</h3>
+            <div class="layer-item">
+                <label class="switch">
+                    <input type="checkbox" onchange="toggleCamada(this, 'SWOT_orbits_BR', 'Órbitas SWOT', '#FF0000', 'linha')">
+                    <span class="slider round"></span>
+                </label>
+                <span class="layer-label">Órbitas (Passes)</span>
+            </div>
+            <div class="layer-item">
+                <label class="switch">
+                    <input type="checkbox" onchange="toggleCamada(this, 'SWOT_tiles_BR', 'Grades SWOT', '#00FFFF', 'linha')">
+                    <span class="slider round"></span>
+                </label>
+                <span class="layer-label">Grades (Tiles)</span>
+            </div>
+        </div>
+
+        <!-- ABA: PROJETO -->
+        <div id="view-projeto" class="panel-body hidden">
+            <h3 class="section-title" style="display:flex; align-items:center; gap:8px;">
+                <span class="material-symbols-outlined" style="color:#00509e;">lightbulb</span>
+                Sobre o Projeto
+            </h3>
+            <p style="font-size:0.85rem; color:#555; margin-bottom:15px;">Conheça a equipe:</p>
+
+            <div class="team-card unb">
+                <h4><span class="material-symbols-outlined">school</span> Universidade de Brasília (UnB)</h4>
+                <ul>
+                    <li>Rejane Cicerelli</li><li>Tati de Almeida</li>
+                    <li>Daniel Beltrão</li><li>Luana Sales</li>
+                    <li>Thiago Lappicy</li><li>Leonardo Moura</li>
+                    <li>Beatriz Brito</li><li>Joaquim Araujo</li>
+                    <li>Reuel Ebezener</li>
+                </ul>
+            </div>
+
+            <div class="team-card ana">
+                <h4><span class="material-symbols-outlined">water_drop</span> Agência Nacional de Águas (ANA)</h4>
+                <ul>
+                    <li>Alexandre Abdalla</li><li>Alexandre Amorim</li>
+                    <li>Ana Clara Matos</li><li>Cássio Rampinelli</li>
+                    <li>Dhalton Ventura</li><li>Klaus Reitz</li>
+                    <li>Luis Cordeiro</li><li>Marcos Pufal</li>
+                    <li>Maurício Cordeiro</li><li>Saulo de Souza</li>
+                    <li>Teresa Carvalho</li><li>Vinícius Roman</li>
+                </ul>
+            </div>
+
+            <div class="team-card collab">
+                <h4><span class="material-symbols-outlined">public</span> Outros Colaboradores</h4>
+                <ul>
+                    <li>Renato Frasson (JPL / NASA)</li>
+                    <li>Augusto Getirana (Goddard / NASA)</li>
+                    <li>Mohammadjavad Tourian (Stuttgart)</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- ABA: REFERÊNCIAS -->
+        <div id="view-referencias" class="panel-body hidden">
+            <h3 class="section-title">Referências Bibliográficas</h3>
+            <div style="text-align:center; margin-top:50px; color:#003366;">
+                <span class="material-symbols-outlined" style="font-size:48px; color:#00509e; display:block; margin-bottom:10px;">engineering</span>
+                <p style="font-size:1.1rem; font-weight:500; margin:0;">Estamos em construção</p>
+                <p style="font-size:0.85rem; margin-top:5px;">Em breve esta seção será atualizada.</p>
+            </div>
+        </div>
+
+        <!-- ABA: RESULTADOS -->
+        <div id="view-resultados" class="panel-body results-view hidden">
+            <div id="results-meta" class="hidden">
+                <div class="results-summary">
+                    <span id="total-count">0</span> arquivos • <span id="total-size">0 MB</span>
+                </div>
+                <div class="results-toolbar">
+                    <label style="font-weight:600; font-size:0.85rem; display:flex; align-items:center; cursor:pointer; margin:0; color:#003366;">
+                        <input type="checkbox" id="select-all" onclick="toggleSelectAll()" style="margin-right:8px; cursor:pointer;">
+                        Selecionar Todos
+                    </label>
+                </div>
+            </div>
+
+            <div id="results-container-wrapper">
+                <div id="results-list" class="results-list hidden"></div>
+                <div id="progress-container" class="loading-overlay hidden">
+                    <div class="loader-content">
+                        <div class="loader-spinner"></div>
+                        <p style="margin-top:15px; font-weight:500; color:#00509e;">Buscando na NASA...</p>
+                    </div>
+                    <div class="progress-bar-bg"><div id="progress-fill"></div></div>
+                </div>
+            </div>
+
+            <button id="btn-download-selected" type="button" class="btn-aneel download hidden"
+                onclick="baixarSelecionados()" disabled>
+                <span class="material-symbols-outlined">download</span> Baixar Selecionados
+            </button>
+            <button type="button" class="btn-text"
+                onclick="resetarConsulta()"
+                style="margin-top:15px; display:inline-flex; align-items:center; justify-content:center; gap:5px; color:#00509e !important;">
+                <span class="material-symbols-outlined" style="font-size:18px;">refresh</span>
+                Voltar e Iniciar Nova Consulta
+            </button>
+        </div>
+
+    </div><!-- /aneel-panel -->
+
+    <!-- ===== PAINEL MANUAL ===== -->
+    <div id="manual-panel" class="manual-panel">
+        <div class="manual-header">
+            <span class="material-symbols-outlined">help_center</span>
+            <h3>Manual do Usuário</h3>
+            <button class="close-btn" onclick="toggleManual()" title="Fechar">
+                <span class="material-symbols-outlined">close</span>
+            </button>
+        </div>
+        <div class="manual-body">
+            <h4>Como utilizar a Plataforma</h4>
+            <p>Siga os passos abaixo para realizar o download dos dados:</p>
+            <ul>
+                <li><b>Passo 1:</b> Selecione o Produto e Subproduto desejado.</li>
+                <li><b>Passo 2:</b> Defina sua Área de Interesse (Upload, Estado ou Desenho no mapa).</li>
+                <li><b>Passo 3:</b> Escolha a Data Inicial e a Data Final.</li>
+                <li><b>Passo 4:</b> Clique em Consultar. O sistema buscará os arquivos na NASA.</li>
+                <li><b>Passo 5:</b> Selecione os arquivos e clique em Baixar. Uma janela se abrirá para escolher a pasta.</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- ===== CONTAINER DE TOASTS ===== -->
+    <div id="toast-container"></div>
+
+    <!-- ===== SCRIPTS ===== -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

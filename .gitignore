@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.pyc
+.env
+dados_swot/
+temp_uploads/
+.DS_Store

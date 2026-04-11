@@ -1,0 +1,366 @@
+/* =========================================
+   1. ESTILOS GERAIS E LAYOUT
+   ========================================= */
+*, *::before, *::after { box-sizing: border-box; }
+
+body, html {
+    margin: 0; padding: 0; height: 100%;
+    font-family: 'Segoe UI', sans-serif;
+    background: #ddd; overflow: hidden;
+}
+
+#map {
+    top: 60px !important;
+    height: calc(100vh - 60px) !important;
+    width: 100%;
+    position: absolute;
+    left: 0;
+    z-index: 0;
+}
+
+.map-loading, .map-loading * { cursor: wait !important; }
+
+/* =========================================
+   2. NAVBAR
+   ========================================= */
+.top-navbar {
+    position: fixed; top: 0; left: 0; width: 100%; height: 60px;
+    background-color: #ffffff; border-bottom: 2px solid #003366;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    z-index: 2000;
+}
+
+.nav-brand {
+    display: flex; align-items: center; gap: 10px;
+    color: #003366; font-weight: 800; font-size: 1.3rem; letter-spacing: 0.5px;
+}
+.nav-icon { color: #00509e; font-size: 34px !important; }
+.nav-subtitle { font-size: 0.85rem; color: #666; font-weight: 600; margin-left: 5px; }
+
+.nav-menu { display: flex; height: 100%; align-items: center; gap: 5px; }
+.nav-item {
+    display: flex; align-items: center; gap: 6px; height: 100%; padding: 0 15px;
+    cursor: pointer; transition: background 0.2s, color 0.2s; font-weight: 600; font-size: 0.95rem;
+    color: #003366; border-bottom: 4px solid transparent;
+}
+.nav-item:hover { background-color: #f0f6fa; color: #00509e; }
+.nav-item.active { border-bottom: 4px solid #00509e; color: #00509e; background-color: #eaf3fa; }
+.nav-item.disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+.nav-item .material-symbols-outlined { font-size: 20px; }
+
+.nav-dropdown { position: relative; padding: 0 10px; }
+.nav-dropdown .material-symbols-outlined { font-size: 26px; }
+.dropdown-content {
+    display: none; position: absolute; top: 60px; right: 10px;
+    background-color: #fff; box-shadow: 0px 4px 12px rgba(0,0,0,0.15);
+    border: 1px solid #ddd; border-bottom-left-radius: 6px; border-bottom-right-radius: 6px;
+    padding: 12px; flex-direction: column; gap: 12px; z-index: 3000; min-width: 110px;
+}
+.nav-dropdown:hover .dropdown-content { display: flex; }
+.dropdown-content label {
+    color: #003366 !important; font-size: 0.9rem; font-weight: 600;
+    cursor: pointer; display: flex; align-items: center; gap: 6px; margin: 0 !important;
+}
+
+/* =========================================
+   3. PAINEL LATERAL
+   ========================================= */
+.aneel-panel {
+    position: absolute; top: 75px; left: 20px; width: 340px;
+    background: white; box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+    border-radius: 8px; z-index: 1500; display: flex; flex-direction: column;
+    height: calc(100vh - 95px); overflow-y: auto;
+    /* Transição suave ao aparecer/desaparecer */
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    transform-origin: top left;
+}
+
+.aneel-panel.hidden-panel {
+    opacity: 0;
+    pointer-events: none;
+    transform: scaleY(0.97);
+}
+
+/* Oculta os controles legados do CSS base */
+.aneel-header, .panel-tabs { display: none !important; }
+
+.panel-body {
+    padding: 15px;
+    overflow-y: auto;
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+/* View de resultados precisa ser flex coluna para crescer */
+.panel-body.results-view {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+}
+
+label {
+    display: block; font-weight: 600; font-size: 0.85rem;
+    margin-top: 10px; color: #003366;
+}
+
+select, input[type="text"], input[type="number"], input[type="date"], input[type="file"] {
+    width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc;
+    border-radius: 3px; font-size: 0.85rem; box-sizing: border-box;
+    transition: border-color 0.15s;
+}
+select:focus, input:focus {
+    outline: none;
+    border-color: #00509e;
+    box-shadow: 0 0 0 2px rgba(0, 80, 158, 0.15);
+}
+
+.coord-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px; }
+.small-inputs input { font-size: 0.8rem; background: #f9f9f9; }
+
+.btn-aneel {
+    background-color: #0079c1; color: white; border: none; padding: 10px; width: 100%;
+    border-radius: 4px; font-weight: bold; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    transition: background-color 0.2s, transform 0.1s;
+}
+.btn-aneel:hover { background-color: #005a91; }
+.btn-aneel:active { transform: scale(0.98); }
+.btn-aneel:disabled { background-color: #ccc; cursor: not-allowed; transform: none; }
+
+.btn-text {
+    background: none; border: none; color: #dc3545; cursor: pointer;
+    margin-top: 10px; font-size: 0.85rem; text-decoration: underline;
+}
+
+.upload-container {
+    border: 2px dashed #ccc; padding: 10px; text-align: center;
+    background: #fafafa; border-radius: 4px; transition: border-color 0.2s, background 0.2s;
+}
+.upload-container:hover { border-color: #0079c1; background: #f0f7ff; }
+
+.sub-opts {
+    background-color: #f8f9fa; border: 1px solid #e9ecef;
+    border-top: none; padding: 10px; margin-bottom: 10px; border-radius: 0 0 4px 4px;
+}
+.sub-label { font-size: 0.75rem; color: #666; margin-top: 5px; }
+
+.aoi-tabs { border: 1px solid #ddd; padding: 10px; border-radius: 4px; background: #fff; }
+.filter-block { margin-bottom: 12px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+.filter-block label { margin-bottom: 3px; }
+.section-title { font-size: 1.1rem; color: #003366; margin-top: 10px; border-bottom: 1px solid #eee; margin-bottom: 8px; }
+.hidden { display: none !important; }
+
+.date-warning {
+    background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba;
+    padding: 8px; border-radius: 4px; margin-bottom: 8px; font-size: 0.8rem; text-align: center;
+}
+
+/* =========================================
+   4. SWITCH / BOTÕES LIGA/DESLIGA
+   ========================================= */
+.layer-item { display: flex; align-items: center; padding: 8px 0; border-bottom: 1px dotted #eee; }
+.layer-label { margin-left: 12px; font-size: 0.9rem; color: #444; }
+
+.switch { position: relative; display: inline-block; width: 40px; height: 20px; flex-shrink: 0; margin-right: 5px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+    position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+    background-color: #ccc; transition: background .3s; border-radius: 20px;
+    will-change: background-color;
+}
+.slider:before {
+    position: absolute; content: ""; height: 16px; width: 16px;
+    left: 2px; bottom: 2px; background-color: white;
+    transition: transform .3s; border-radius: 50%;
+    will-change: transform;
+}
+input:checked + .slider { background-color: #0079c1; }
+input:focus + .slider { box-shadow: 0 0 1px #0079c1; }
+input:checked + .slider:before { transform: translateX(20px); }
+
+/* =========================================
+   5. LOADER E RESULTADOS
+   ========================================= */
+.results-summary {
+    text-align: center; background: #f8f9fa; padding: 8px;
+    border-bottom: 1px solid #eee; font-size: 0.9rem; color: #333; font-weight: 600;
+}
+.results-toolbar {
+    padding: 8px 10px; border-bottom: 1px solid #eee;
+    background: #fafafa; display: flex; align-items: center;
+}
+.loading-overlay {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    background: white; z-index: 10; display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+}
+.loader-spinner {
+    border: 5px solid #f3f3f3; border-top: 5px solid #0079c1;
+    border-radius: 50%; width: 40px; height: 40px;
+    animation: spin 0.8s linear infinite;
+    will-change: transform;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.progress-bar-bg { position: absolute; bottom: 0; left: 0; width: 100%; height: 6px; background: #e0e0e0; }
+#progress-fill { height: 100%; background-color: #0079c1; width: 0%; transition: width 0.3s ease; will-change: width; }
+.progress-filling { animation: fillSim 5s ease-out forwards; }
+@keyframes fillSim { 0%{width:0%} 15%{width:10%} 40%{width:35%} 70%{width:70%} 100%{width:93%} }
+
+.results-list { border: 1px solid #eee; flex-grow: 1; overflow-y: auto; position: relative; background: #fff; }
+.result-item { padding: 8px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; }
+.result-info { flex-grow: 1; margin-right: 10px; min-width: 0; display: flex; align-items: center; }
+.result-info input[type="checkbox"] { margin-right: 10px; width: auto; cursor: pointer; }
+.result-text { min-width: 0; }
+.result-filename { font-weight: 600; word-break: break-all; }
+.result-size { color: #28a745; font-size: 0.75rem; }
+
+#results-container-wrapper {
+    position: relative; flex-grow: 1; min-height: 200px; display: flex; flex-direction: column;
+}
+
+/* =========================================
+   6. MODAL / POP-UP DE AVISO
+   ========================================= */
+.modal-overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background-color: rgba(0,0,0,0.6); z-index: 9999;
+    display: flex; justify-content: center; align-items: center;
+}
+.modal-content {
+    background-color: #fffbe6; width: 90%; max-width: 600px;
+    padding: 25px; border-radius: 4px; box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    color: #333; animation: fadeInModal 0.25s ease-out;
+}
+@keyframes fadeInModal { from { opacity: 0; transform: translateY(-15px); } to { opacity: 1; transform: translateY(0); } }
+.modal-header-text { font-size: 1rem; font-weight: 600; margin-top: 0; margin-bottom: 15px; }
+.modal-body-text p { font-size: 0.9rem; line-height: 1.5; margin-bottom: 10px; text-align: justify; }
+.modal-footer { margin-top: 20px; display: flex; flex-direction: column; align-items: flex-end; gap: 15px; border-top: 1px solid #e0d8b0; padding-top: 15px; }
+.modal-checkbox { font-size: 0.85rem; display: flex; align-items: center; gap: 8px; width: 100%; cursor: pointer; }
+.btn-modal { padding: 8px 25px; background-color: #8c9eff; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; transition: background 0.2s; }
+.btn-modal:hover { background-color: #5c6bc0; }
+.btn-modal:disabled { background-color: #ccc; cursor: not-allowed; }
+
+/* =========================================
+   7. POP-UP DO MAPA (LEAFLET)
+   ========================================= */
+.custom-popup-wrapper {
+    max-height: 50vh; overflow-y: auto; padding-right: 8px;
+    scrollbar-width: thin; scrollbar-color: #c1c1c1 #f1f1f1;
+}
+.custom-popup-wrapper::-webkit-scrollbar { width: 6px; }
+.custom-popup-wrapper::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+.custom-popup-wrapper::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+.custom-popup-wrapper::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
+
+.custom-popup-header {
+    font-weight: 700; font-size: 1.05rem; color: #0079c1; margin-bottom: 8px; padding-bottom: 8px;
+    border-bottom: 2px solid #eee; position: sticky; top: 0; background: white; z-index: 10;
+}
+.custom-popup-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.custom-popup-table td { padding: 5px 4px; border-bottom: 1px solid #f9f9f9; vertical-align: top; }
+.custom-popup-key { font-weight: 600; color: #555; width: 45%; word-break: break-word; }
+.custom-popup-value { color: #222; word-break: break-word; }
+
+/* =========================================
+   8. PAINEL MANUAL
+   ========================================= */
+.manual-panel {
+    position: fixed; top: 75px; right: -400px; width: 360px;
+    height: calc(100vh - 95px); background-color: #ffffff;
+    border-radius: 8px; box-shadow: -2px 4px 15px rgba(0,0,0,0.15);
+    z-index: 2500; display: flex; flex-direction: column;
+    border: 1px solid #ddd;
+    transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: right;
+}
+.manual-panel.open { right: 15px; }
+.manual-header {
+    display: flex; align-items: center; gap: 10px; padding: 15px;
+    background-color: #f0f6fa; border-bottom: 2px solid #00509e;
+    border-top-left-radius: 8px; border-top-right-radius: 8px;
+}
+.manual-header h3 { margin: 0; color: #003366; font-size: 1.1rem; flex-grow: 1; }
+.manual-header .material-symbols-outlined { color: #00509e; }
+.manual-header .close-btn {
+    background: none; border: none; cursor: pointer; color: #dc3545;
+    display: flex; align-items: center; justify-content: center; padding: 0; transition: color 0.2s, transform 0.2s;
+}
+.manual-header .close-btn:hover { color: #a71d2a; transform: scale(1.1); }
+.manual-body { padding: 20px; overflow-y: auto; flex-grow: 1; color: #444; font-size: 0.9rem; line-height: 1.6; }
+.manual-body h4 { color: #00509e; margin-top: 0; margin-bottom: 10px; font-size: 1rem; }
+.manual-body p { margin-bottom: 12px; }
+.manual-body ul { padding-left: 20px; margin-bottom: 15px; }
+.manual-body li { margin-bottom: 8px; }
+
+/* =========================================
+   9. COORDENADAS NO MAPA
+   ========================================= */
+.coord-display {
+    background-color: #6a7b83; color: #ffffff; padding: 4px 8px; font-size: 13px;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    border-radius: 2px; display: flex; align-items: center; gap: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3); pointer-events: none; line-height: 1;
+}
+.coord-display .material-symbols-outlined {
+    font-size: 15px; border-right: 1px solid rgba(255,255,255,0.4); padding-right: 6px;
+}
+
+/* =========================================
+   10. ESCALA DO MAPA
+   ========================================= */
+.leaflet-top { top: 10px !important; }
+.leaflet-bottom.leaflet-left { margin-bottom: 15px !important; margin-left: 360px !important; }
+.leaflet-control-scale { margin-bottom: 4px !important; }
+.leaflet-control-scale-line {
+    background: transparent !important; border: 2px solid #333 !important; border-top: none !important;
+    color: #333 !important; font-weight: 700 !important; font-size: 12px !important;
+    text-shadow: 1px 1px 1px #fff, -1px -1px 1px #fff, 1px -1px 1px #fff, -1px 1px 1px #fff !important;
+}
+
+/* =========================================
+   11. TOASTS (substituem alert())
+   ========================================= */
+#toast-container {
+    position: fixed; bottom: 20px; right: 20px; z-index: 9999;
+    display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+}
+.toast {
+    background: #333; color: #fff; padding: 10px 16px; border-radius: 6px;
+    font-size: 0.875rem; max-width: 320px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    opacity: 0; transform: translateY(10px);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    pointer-events: all; line-height: 1.4;
+    border-left: 4px solid #555;
+    will-change: opacity, transform;
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast.toast-success { background: #1a3a2a; border-left-color: #28a745; }
+.toast.toast-warning { background: #3a2f10; border-left-color: #ffc107; color: #ffe680; }
+.toast.toast-error { background: #3a1018; border-left-color: #dc3545; color: #ffb3bb; }
+.toast.toast-info { background: #0d2a40; border-left-color: #0079c1; }
+
+/* =========================================
+   12. PAINEL DE PROJETO E REFERÊNCIAS
+   ========================================= */
+.team-card {
+    background: #f4f8fb; border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 12px;
+    padding: 12px 15px;
+}
+.team-card.unb  { border-left: 4px solid #00509e; }
+.team-card.ana  { border-left: 4px solid #0099FF; }
+.team-card.collab { border-left: 4px solid #FFD700; }
+.team-card h4 {
+    margin: 0 0 10px 0; color: #003366; font-size: 0.95rem;
+    display: flex; align-items: center; gap: 6px;
+}
+.team-card h4 .material-symbols-outlined { font-size: 18px; }
+.team-card ul {
+    margin: 0; padding-left: 20px; color: #444;
+    font-size: 0.85rem; line-height: 1.6;
+}
+.team-card.unb ul, .team-card.ana ul { column-count: 2; column-gap: 20px; }
