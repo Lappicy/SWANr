@@ -1,7 +1,7 @@
 import os
+import gc
 import shutil
 import time
-import requests
 import json
 import tempfile
 import zipfile
@@ -10,7 +10,8 @@ import uuid
 import traceback
 import re
 import io
-import gc  # CORREÇÃO: Necessário para forçar a limpeza de memória do NetCDF
+import warnings
+from collections import OrderedDict
 from flask import Flask, render_template, request, jsonify, Response, send_file, after_this_request
 from werkzeug.utils import secure_filename
 import earthaccess
@@ -19,6 +20,10 @@ import pandas as pd
 from shapely.geometry import shape, box
 from shapely.ops import transform as shapely_transform
 from dotenv import load_dotenv
+
+# Silencia avisos inofensivos
+warnings.filterwarnings("ignore", message="Dataset has no geotransform.*")
+warnings.filterwarnings("ignore", message=".*NotGeoreferencedWarning.*")
 
 # --- CONFIGURAÇÃO DE DRIVERS (Fiona) ---
 import fiona
@@ -68,44 +73,110 @@ COLLECTIONS_BASE = {
     "Raster": "SWOT_L2_HR_Raster_D"
 }
 
-CACHE_ESTADOS = {}
+_CACHE_MAX = 10
+CACHE_ESTADOS = OrderedDict()
+_CACHE_COL_UF = {}
+_CACHE_MASK_GEOM = OrderedDict()
+_CACHE_MASK_MAX = 5
 
+
+def _cache_set(cache, key, value, max_size):
+    if key in cache:
+        cache.move_to_end(key)
+    cache[key] = value
+    if len(cache) > max_size:
+        cache.popitem(last=False)
 
 def remover_z(geom):
-    """Remove a dimensão Z de uma geometria usando shapely_transform."""
     return shapely_transform(lambda x, y, *_: (x, y), geom)
 
+def _detectar_col_uf(caminho_arquivo, uf_alvo):
+    if caminho_arquivo in _CACHE_COL_UF:
+        return _CACHE_COL_UF[caminho_arquivo]
 
-# --- 2. FUNÇÕES AUXILIARES ---
+    col = None
+    try:
+        with fiona.open(caminho_arquivo) as src:
+            props = list(src.schema['properties'].keys())
+
+        candidatos = ['SIGLA_UF', 'SIGLA', 'UF', 'CD_UF', 'ABBREV_STATE', 'sigla_uf', 'uf']
+        for c in candidatos:
+            if c in props:
+                col = c
+                break
+
+        if col is None:
+            amostra = gpd.read_file(caminho_arquivo, rows=1)
+            for c in amostra.columns:
+                if amostra[c].astype(str).str.upper().isin([uf_alvo.upper()]).any():
+                    col = c
+                    break
+    except Exception as e:
+        print(f"[AVISO] _detectar_col_uf: {e}")
+
+    _CACHE_COL_UF[caminho_arquivo] = col
+    return col
+
+
 def carregar_geodataframe(caminho_arquivo):
     abs_path = os.path.abspath(caminho_arquivo).replace('\\', '/')
     ext = os.path.splitext(caminho_arquivo)[1].lower()
     temp_dir = None
 
     try:
-        if ext in ['.zip', '.kmz']:
+        if ext == '.zip':
             try:
                 return gpd.read_file(f"zip:///{abs_path}"), None
             except Exception:
-                temp_dir = tempfile.mkdtemp()
-                with zipfile.ZipFile(caminho_arquivo, 'r') as z:
-                    z.extractall(temp_dir)
+                pass 
+        
+        if ext in ['.zip', '.kmz']:
+            temp_dir = tempfile.mkdtemp()
+            with zipfile.ZipFile(caminho_arquivo, 'r') as z:
+                z.extractall(temp_dir)
 
-                for padrao in ["**/*.shp", "**/*.kml", "**/*.gpkg", "**/*.geojson"]:
-                    encontrados = glob.glob(os.path.join(temp_dir, padrao), recursive=True)
-                    if encontrados:
-                        return gpd.read_file(encontrados[0]), temp_dir
+            for padrao in ["**/*.shp", "**/*.kml", "**/*.gpkg", "**/*.geojson"]:
+                encontrados = glob.glob(os.path.join(temp_dir, padrao), recursive=True)
+                if encontrados:
+                    return gpd.read_file(encontrados[0]), temp_dir
 
-                raise Exception("Nenhum arquivo de mapa válido encontrado dentro do ZIP.")
+            raise Exception("Nenhum arquivo de mapa valido encontrado.")
         else:
             return gpd.read_file(abs_path), None
     except Exception as e:
         if temp_dir and os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
+            shutil.rmtree(temp_dir, ignore_errors=True)
         raise e
 
 
-# --- 3. ROTAS PRINCIPAIS ---
+def _carregar_estado_gpkg(uf):
+    caminhos_possiveis = [
+        os.path.join(BASE_DIR, 'camadas', 'BR_UF_2024.shp'),
+        os.path.join(BASE_DIR, 'camadas', 'BR_Estados.gpkg'),
+        os.path.join(BASE_DIR, 'camadas', 'BR_Estados.geojson'),
+        os.path.join(BASE_DIR, 'camadas', 'BR_Estados.shp'),
+    ]
+    arq = next((p for p in caminhos_possiveis if os.path.exists(p)), None)
+    if not arq:
+        return None, "Arquivo de estados nao encontrado."
+
+    col = _detectar_col_uf(arq, uf)
+    if col is None:
+        return None, f"Coluna UF nao detectada em {arq}."
+
+    try:
+        gdf = gpd.read_file(arq, where=f"{col} = '{uf.upper()}'")
+        if gdf.empty:
+            gdf = gpd.read_file(arq, where=f"UPPER({col}) = '{uf.upper()}'")
+        return gdf, None
+    except Exception as e:
+        gdf_f = gpd.read_file(arq)
+        resultado = gdf_f[gdf_f[col].astype(str).str.strip().str.upper() == uf.upper()].copy()
+        del gdf_f
+        gc.collect()
+        return resultado, None
+
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -114,19 +185,21 @@ def index():
 @app.route('/upload_user_shape', methods=['POST'])
 def upload_user_shape():
     if 'file' not in request.files:
-        return jsonify({'error': 'Arquivo não enviado.'}), 400
+        return jsonify({'error': 'Arquivo nao enviado.'}), 400
     file = request.files['file']
     if file.filename == '':
         return jsonify({'error': 'Nome do arquivo vazio.'}), 400
 
     filename = secure_filename(file.filename)
     if filename.lower().endswith('.shp'):
-        return jsonify({'error': 'Um arquivo .shp não funciona sozinho! Por favor, compacte todos os arquivos do shapefile (.shp, .shx, .dbf, .prj) em um arquivo .ZIP e faça o upload.'}), 400
+        return jsonify({'error': 'Um arquivo .shp nao funciona sozinho! '
+                        'Por favor, compacte todos os arquivos do shapefile em um arquivo .ZIP e faca o upload.'}), 400
 
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     file.save(filepath)
 
     temp_dir = None
+    gdf = None
     try:
         gdf, temp_dir = carregar_geodataframe(filepath)
 
@@ -140,17 +213,24 @@ def upload_user_shape():
                 gdf.geometry = gdf.geometry.map(remover_z)
             gdf.geometry = gdf.geometry.make_valid()
 
+        bounds = list(gdf.total_bounds)
+        geojson_str = gdf.to_json()
+
+        _cache_set(_CACHE_MASK_GEOM, filename, {"bounds": bounds}, _CACHE_MASK_MAX)
+
         return jsonify({
             'message': 'Sucesso',
             'filename': filename,
-            'bbox': list(gdf.total_bounds),
-            'geojson': gdf.to_json()
+            'bbox': bounds,
+            'geojson': geojson_str
         })
     except Exception as e:
         return jsonify({'error': f"Erro ao ler arquivo: {str(e)}"}), 500
     finally:
         if temp_dir and os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        del gdf
+        gc.collect()
 
 
 @app.route('/limites/estado/<uf_sigla>')
@@ -158,40 +238,16 @@ def get_estado_limits(uf_sigla):
     uf = uf_sigla.upper()
     if uf == 'BR':
         return jsonify({"bbox": [-73.99, -33.75, -28.84, 5.27], "geojson": None})
+
     if uf in CACHE_ESTADOS:
+        CACHE_ESTADOS.move_to_end(uf)
         return jsonify(CACHE_ESTADOS[uf])
 
+    gdf_estado = None
     try:
-        caminhos_possiveis = [
-            os.path.join(BASE_DIR, 'camadas', 'BR_UF_2024.shp'),
-            os.path.join(BASE_DIR, 'camadas', 'BR_Estados.gpkg'),
-            os.path.join(BASE_DIR, 'camadas', 'BR_Estados.geojson'),
-            os.path.join(BASE_DIR, 'camadas', 'BR_Estados.shp')
-        ]
-
-        caminho_arquivo = None
-        for cp in caminhos_possiveis:
-            if os.path.exists(cp):
-                caminho_arquivo = cp
-                break
-
-        if not caminho_arquivo:
-            return jsonify({"error": "Arquivo de estados não encontrado na pasta 'camadas'."}), 404
-
-        gdf = gpd.read_file(caminho_arquivo)
-
-        coluna_uf = None
-        for col in gdf.columns:
-            if gdf[col].astype(str).str.strip().str.upper().eq(uf).any():
-                coluna_uf = col
-                break
-
-        if not coluna_uf:
-            return jsonify({"error": f"Sigla '{uf}' não encontrada."}), 400
-
-        gdf_estado = gdf[gdf[coluna_uf].astype(str).str.strip().str.upper() == uf].copy()
-        if gdf_estado.empty:
-            return jsonify({"error": f"Estado {uf} não encontrado."}), 404
+        gdf_estado, erro = _carregar_estado_gpkg(uf)
+        if erro or gdf_estado is None or gdf_estado.empty:
+            return jsonify({"error": erro or f"Estado {uf} nao encontrado."}), 404
 
         if gdf_estado.crs and gdf_estado.crs.to_string() != "EPSG:4326":
             gdf_estado = gdf_estado.to_crs("EPSG:4326")
@@ -201,19 +257,23 @@ def get_estado_limits(uf_sigla):
         geojson_data = json.loads(gdf_estado.to_json())
 
         res = {"bbox": [bounds[0], bounds[1], bounds[2], bounds[3]], "geojson": geojson_data}
-        CACHE_ESTADOS[uf] = res
+        _cache_set(CACHE_ESTADOS, uf, res, _CACHE_MAX)
         return jsonify(res)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    finally:
+        del gdf_estado
+        gc.collect()
 
 
 @app.route('/camadas/<nome_camada>')
 def get_camada(nome_camada):
+    gdf = None
     try:
         nome_arquivo = f"{nome_camada}.gpkg"
         caminho_arquivo = os.path.join('camadas', nome_arquivo)
         if not os.path.exists(caminho_arquivo):
-            return jsonify({"error": "Camada não encontrada."}), 404
+            return jsonify({"error": "Camada nao encontrada."}), 404
 
         gdf = gpd.read_file(caminho_arquivo)
         for col in gdf.columns:
@@ -225,13 +285,20 @@ def get_camada(nome_camada):
         if len(gdf) > 3000:
             gdf['geometry'] = gdf['geometry'].simplify(0.01)
 
-        return Response(gdf.to_json(), mimetype='application/json')
+        resp = Response(gdf.to_json(), mimetype='application/json')
+        return resp
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    finally:
+        del gdf
+        gc.collect()
 
 
 @app.route('/buscar_dados', methods=['POST'])
 def buscar_dados():
+    gdf_mask = None
+    gdf_tiles = None
+    inter = None
     try:
         d = request.json
         prod = d.get('produto')
@@ -239,7 +306,7 @@ def buscar_dados():
         end_date = d.get('end_date')
 
         if not start_date or not end_date:
-            return jsonify({"status": "error", "message": "Selecione o período."}), 400
+            return jsonify({"status": "error", "message": "Selecione o periodo."}), 400
 
         short_name = ""
         subproduto_str = ""
@@ -252,7 +319,7 @@ def buscar_dados():
             if prod == 'Raster':
                 subproduto_str = d.get('resolucao', '')
         else:
-            return jsonify({"status": "error", "message": "Produto inválido"}), 400
+            return jsonify({"status": "error", "message": "Produto invalido"}), 400
 
         cycle_val = str(d.get('cycle', '')).strip().zfill(3) if str(d.get('cycle', '')).strip() else "*"
         pass_val = str(d.get('pass', '')).strip().zfill(3) if str(d.get('pass', '')).strip() else "*"
@@ -265,38 +332,35 @@ def buscar_dados():
         bbox_geom = None
         if d.get('lon_min') and str(d.get('lon_min')).strip() != "":
             try:
-                bbox_geom = box(float(d['lon_min']), float(d['lat_min']), float(d['lon_max']), float(d['lat_max']))
-            except Exception as e:
+                bbox_geom = box(float(d['lon_min']), float(d['lat_min']),
+                                float(d['lon_max']), float(d['lat_max']))
+            except Exception:
                 pass
 
         passes_encontrados, tiles_encontrados, usou_smart_filter = [], [], False
 
         if (bbox_geom or mask_name or state_uf) and pass_val == "*" and tile_val == "*":
             try:
-                gdf_mask = None
                 if mask_name:
                     mask_path = os.path.join(app.config['UPLOAD_FOLDER'], mask_name)
                     if os.path.exists(mask_path):
                         gdf_mask, _ = carregar_geodataframe(mask_path)
                 elif state_uf and state_uf != 'BR':
-                    cp = [os.path.join(BASE_DIR, 'camadas', p) for p in ['BR_UF_2024.shp', 'BR_Estados.gpkg', 'BR_Estados.geojson', 'BR_Estados.shp']]
-                    arq = next((p for p in cp if os.path.exists(p)), None)
-                    if arq:
-                        gdf_f = gpd.read_file(arq)
-                        col = next((c for c in gdf_f.columns if gdf_f[c].astype(str).str.strip().str.upper().eq(state_uf.upper()).any()), None)
-                        if col:
-                            gdf_mask = gdf_f[gdf_f[col].astype(str).str.strip().str.upper() == state_uf.upper()].copy()
+                    gdf_mask, erro = _carregar_estado_gpkg(state_uf)
+                    if erro:
+                        gdf_mask = None
 
                 if gdf_mask is None or gdf_mask.empty:
                     if bbox_geom:
                         gdf_mask = gpd.GeoDataFrame(geometry=[bbox_geom], crs="EPSG:4326")
                     else:
-                        raise Exception("Sem geometria válida para o smart filter.")
+                        raise Exception("Sem geometria valida para o smart filter.")
                 else:
                     if gdf_mask.crs is None:
                         gdf_mask.set_crs(epsg=4326, inplace=True)
                     else:
                         gdf_mask = gdf_mask.to_crs("EPSG:4326")
+                    gdf_mask = gdf_mask[['geometry']].dissolve()
                     gdf_mask['geometry'] = gdf_mask['geometry'].simplify(0.0001)
                     gdf_mask['geometry'] = gdf_mask['geometry'].make_valid()
 
@@ -328,8 +392,18 @@ def buscar_dados():
                                     tiles_encontrados = list(set(tiles_encontrados))
                                 else:
                                     tiles_encontrados = inter[t_col].astype(str).unique().tolist()
+                        else:
+                            usou_smart_filter = False
+                    else:
+                        usou_smart_filter = False
+                else:
+                    usou_smart_filter = False
+
             except Exception:
                 usou_smart_filter = False
+            finally:
+                del gdf_tiles, inter
+                gc.collect()
 
         patterns = []
         sub = subproduto_str if subproduto_str else "*"
@@ -372,28 +446,21 @@ def buscar_dados():
         base_kwargs = {
             "short_name": short_name,
             "temporal": (f"{start_date}T00:00:00", f"{end_date}T23:59:59"),
-            "count": 3000
+            "count": 500
         }
 
         if not patterns and subproduto_str:
             base_kwargs["granule_name"] = f"*_{subproduto_str}_*"
 
         if bbox_geom:
-            base_kwargs["bounding_box"] = (float(d['lon_min']), float(d['lat_min']), float(d['lon_max']), float(d['lat_max']))
-        elif mask_name or state_uf:
+            base_kwargs["bounding_box"] = (
+                float(d['lon_min']), float(d['lat_min']),
+                float(d['lon_max']), float(d['lat_max'])
+            )
+        elif gdf_mask is not None and not gdf_mask.empty:
             try:
-                mask_path = os.path.join(app.config['UPLOAD_FOLDER'], mask_name) if mask_name else None
-                if mask_path and os.path.exists(mask_path):
-                    gdf_tmp, tmp_dir_tmp = carregar_geodataframe(mask_path)
-                    if gdf_tmp is not None and not gdf_tmp.empty:
-                        if gdf_tmp.crs is None:
-                            gdf_tmp.set_crs(epsg=4326, inplace=True)
-                        else:
-                            gdf_tmp = gdf_tmp.to_crs("EPSG:4326")
-                        b = gdf_tmp.total_bounds 
-                        base_kwargs["bounding_box"] = (b[0], b[1], b[2], b[3])
-                        if tmp_dir_tmp and os.path.exists(tmp_dir_tmp):
-                            shutil.rmtree(tmp_dir_tmp)
+                b = gdf_mask.total_bounds
+                base_kwargs["bounding_box"] = (b[0], b[1], b[2], b[3])
             except Exception:
                 pass
 
@@ -431,11 +498,16 @@ def buscar_dados():
             except Exception:
                 pass
 
+        del results
+        gc.collect()
+
         return jsonify({"status": "success", "results": list(fmt_dict.values())})
 
     except Exception as e:
-        print(f"[ERRO] buscar_dados: {traceback.format_exc()}")
         return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        del gdf_mask
+        gc.collect()
 
 
 @app.route('/baixar_selecionados', methods=['POST'])
@@ -456,30 +528,34 @@ def baixar_selecionados():
                     with open(filepath, 'wb') as f:
                         shutil.copyfileobj(r.raw, f)
                 sucessos += 1
-            except Exception:
+            except Exception as e:
                 erros.append(link.split('/')[-1])
 
-        msg = f"Download concluído: {sucessos} arquivo(s)."
+        msg = f"Download concluido: {sucessos} arquivo(s)."
         if erros:
             msg += f" Falha em {len(erros)}: {', '.join(erros)}"
         return jsonify({"status": "success", "message": msg})
     except Exception as e:
-        print(f"[ERRO] baixar_selecionados: {traceback.format_exc()}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route('/download_cropped', methods=['POST'])
 def download_cropped():
     
-    # --- ROTINA DE LIMPEZA SILENCIOSA ---
-    # Apaga arquivos soltos que o Windows bloqueou em sessões anteriores (se tiverem mais de 2 minutos)
+    # --- ROTINA DE LIMPEZA SILENCIOSA CORRIGIDA ---
     try:
         agora = time.time()
-        for f_temp in os.listdir(app.config['UPLOAD_FOLDER']):
-            caminho_f = os.path.join(app.config['UPLOAD_FOLDER'], f_temp)
-            if f_temp.startswith('res_') and os.path.isfile(caminho_f):
-                if agora - os.path.getmtime(caminho_f) > 120:
-                    os.remove(caminho_f)
+        for item in os.listdir(app.config['UPLOAD_FOLDER']):
+            caminho_item = os.path.join(app.config['UPLOAD_FOLDER'], item)
+            idade_segundos = agora - os.path.getmtime(caminho_item)
+            
+            # Deleta arquivos residuais que travaram, mas poupa a mascara por 2 horas
+            if (item.startswith('res_') and idade_segundos > 120) or (idade_segundos > 7200):
+                if os.path.isfile(caminho_item):
+                    try: os.remove(caminho_item)
+                    except: pass
+                elif os.path.isdir(caminho_item):
+                    shutil.rmtree(caminho_item, ignore_errors=True)
     except Exception:
         pass
     # ------------------------------------
@@ -497,19 +573,16 @@ def download_cropped():
         return jsonify({'error': 'Falha no login NASA.'}), 500
 
     tmp_mask_dir = None
+    tmpdirname = None
+    gdf_mask = None
     try:
-        gdf_mask = None
         if mask_name:
             mask_path = os.path.join(app.config['UPLOAD_FOLDER'], mask_name)
             gdf_mask, tmp_mask_dir = carregar_geodataframe(mask_path)
         elif state_uf and state_uf != 'BR':
-            cp = [os.path.join(BASE_DIR, 'camadas', p) for p in ['BR_UF_2024.shp', 'BR_Estados.gpkg', 'BR_Estados.geojson', 'BR_Estados.shp']]
-            arq = next((p for p in cp if os.path.exists(p)), None)
-            if arq:
-                gdf_f = gpd.read_file(arq)
-                col = next((c for c in gdf_f.columns if gdf_f[c].astype(str).str.strip().str.upper().eq(state_uf.upper()).any()), None)
-                if col:
-                    gdf_mask = gdf_f[gdf_f[col].astype(str).str.strip().str.upper() == state_uf.upper()].copy()
+            gdf_mask, erro = _carregar_estado_gpkg(state_uf)
+            if erro:
+                return jsonify({"error": erro}), 400
         elif has_bbox:
             gdf_mask = gpd.GeoDataFrame(
                 geometry=[box(float(lon_min), float(lat_min), float(lon_max), float(lat_max))],
@@ -517,7 +590,7 @@ def download_cropped():
             )
 
         if gdf_mask is None or gdf_mask.empty:
-            return jsonify({"error": "Máscara inválida."}), 400
+            return jsonify({"error": "Mascara invalida."}), 400
 
         if gdf_mask.crs is None:
             gdf_mask.set_crs(epsg=4326, inplace=True)
@@ -525,120 +598,205 @@ def download_cropped():
             gdf_mask = gdf_mask.to_crs("EPSG:4326")
         gdf_mask.geometry = gdf_mask.geometry.make_valid()
 
+        mask_bounds = gdf_mask.total_bounds
+
         session = auth.get_session()
-        with tempfile.TemporaryDirectory() as tmpdirname:
-            real_filename = url.split('/')[-1]
-            ext_orig = os.path.splitext(real_filename)[1].lower()
-            short_input = os.path.join(tmpdirname, f"in{ext_orig}")
+        tmpdirname = tempfile.mkdtemp(dir=app.config['UPLOAD_FOLDER'])
+        
+        real_filename = url.split('/')[-1]
+        ext_orig = os.path.splitext(real_filename)[1].lower()
+        short_input = os.path.join(tmpdirname, f"in{ext_orig}")
 
-            with session.get(url, stream=True) as r:
-                r.raise_for_status()
-                with open(short_input, 'wb') as f:
-                    shutil.copyfileobj(r.raw, f)
+        # --- NOVO: SISTEMA DE RETENTATIVAS (ANTI-FALHA E TIMEOUT) ---
+        sucesso_download = False
+        for tentativa in range(4): 
+            try:
+                # Timeout evita que o request fique pendurado para sempre no navegador
+                with session.get(url, stream=True, timeout=90) as r:
+                    r.raise_for_status()
+                    with open(short_input, 'wb') as f:
+                        shutil.copyfileobj(r.raw, f)
+                sucesso_download = True
+                break
+            except Exception as e:
+                print(f"[AVISO] Gargalo de Rede/NASA (Tentativa {tentativa+1}/4)")
+                time.sleep(2) 
+        
+        if not sucesso_download:
+            return jsonify({'error': 'A NASA recusou a conexão após múltiplas tentativas. Tente selecionar menos arquivos por vez.'}), 502
+        # ------------------------------------------------------------
 
-            path_final = os.path.join(app.config['UPLOAD_FOLDER'], f"res_{uuid.uuid4().hex}")
-            mimetype = "application/octet-stream"
-            d_name = f"recortado_{real_filename}"
+        path_final = os.path.join(app.config['UPLOAD_FOLDER'], f"res_{uuid.uuid4().hex}")
+        mimetype = "application/octet-stream"
+        d_name = f"recortado_{real_filename}"
 
-            if ext_orig == '.zip':
-                extract_path = os.path.join(tmpdirname, "x")
-                with zipfile.ZipFile(short_input, 'r') as z:
-                    z.extractall(extract_path)
-                shps = glob.glob(os.path.join(extract_path, "**/*.shp"), recursive=True)
-                if not shps:
-                    return jsonify({'error': 'ZIP sem Shapefile.'}), 400
+        if ext_orig == '.zip':
+            extract_path = os.path.join(tmpdirname, "x")
+            with zipfile.ZipFile(short_input, 'r') as z:
+                z.extractall(extract_path)
+            shps = glob.glob(os.path.join(extract_path, "**/*.shp"), recursive=True)
+            if not shps:
+                return jsonify({'error': 'ZIP sem Shapefile.'}), 400
 
-                gdf_data = gpd.read_file(shps[0])
-                if gdf_data.crs != gdf_mask.crs:
-                    gdf_data = gdf_data.to_crs(gdf_mask.crs)
-                gdf_data.geometry = gdf_data.geometry.make_valid()
-                try:
-                    clipped = gpd.clip(gdf_data, gdf_mask)
-                except Exception:
-                    return jsonify({'error': 'Erro geométrico no recorte.'}), 400
-
-                if clipped.empty:
-                    return jsonify({'status': 'no_data', 'message': 'Sem dados na área de interesse.'})
-                out_shp_dir = os.path.join(tmpdirname, "out")
-                os.makedirs(out_shp_dir, exist_ok=True)
-                clipped.to_file(os.path.join(out_shp_dir, "data.shp"), driver='ESRI Shapefile')
-                shutil.make_archive(path_final, 'zip', out_shp_dir)
-                path_final += ".zip"
-                mimetype = 'application/zip'
-                if d_name.endswith('.zip.zip'):
-                    d_name = d_name[:-4]
-
-            elif ext_orig == '.nc':
-                if not NETCDF_AVAILABLE:
-                    return jsonify({'error': 'NetCDF libs ausentes (xarray/rioxarray).'}), 500
-                try:
-                    with xr.open_dataset(short_input, decode_coords="all", decode_times=False) as ds:
-                        if ds.rio.crs is None:
-                            ds = ds.rio.write_crs("EPSG:4326")
-                        
-                        try:
-                            clipped = ds.rio.clip(
-                                gdf_mask.geometry.values,
-                                gdf_mask.crs,
-                                drop=True,
-                                all_touched=True 
-                            )
-                            path_final += ".nc"
-                            clipped.to_netcdf(path_final)
-                            clipped.close()
-                            
-                            # CORREÇÃO: Mata o ponteiro fantasma da biblioteca C do NetCDF
-                            del clipped
-                            
-                            mimetype = 'application/x-netcdf'
-                        except Exception as clip_err:
-                            if "NoDataInBounds" in str(type(clip_err)) or "No data found" in str(clip_err):
-                                return jsonify({'status': 'no_data', 'message': 'Sem dados válidos na área de interesse.'})
-                            else:
-                                return jsonify({'status': 'error', 'message': f'Erro no recorte NetCDF: {str(clip_err)}'})
-                except Exception as e:
-                    return jsonify({'status': 'error', 'message': f'Erro na leitura NetCDF: {str(e)}'})
-
-            else:
-                gdf_data = gpd.read_file(short_input)
-                if gdf_data.crs != gdf_mask.crs:
-                    gdf_data = gdf_data.to_crs(gdf_mask.crs)
-                gdf_data.geometry = gdf_data.geometry.make_valid()
+            gdf_data = gpd.read_file(shps[0])
+            if gdf_data.crs != gdf_mask.crs:
+                gdf_data = gdf_data.to_crs(gdf_mask.crs)
+            gdf_data.geometry = gdf_data.geometry.make_valid()
+            try:
                 clipped = gpd.clip(gdf_data, gdf_mask)
-                if clipped.empty:
-                    return jsonify({'status': 'no_data', 'message': 'Sem dados na área de interesse.'})
-                path_final += ext_orig
-                driv = 'GeoJSON'
-                if ext_orig == '.gpkg':
-                    driv = 'GPKG'
-                elif ext_orig == '.kml':
-                    driv = 'KML'
-                clipped.to_file(path_final, driver=driv)
+            except Exception:
+                return jsonify({'error': 'Erro geometrico no recorte.'}), 400
+            finally:
+                del gdf_data
+                gc.collect()
 
-            # Força o Garbage Collector a limpar os ponteiros do NetCDF antes de ler e apagar
+            if clipped.empty:
+                return jsonify({'status': 'no_data', 'message': 'Sem dados na area de interesse.'})
+            out_shp_dir = os.path.join(tmpdirname, "out")
+            os.makedirs(out_shp_dir, exist_ok=True)
+            clipped.to_file(os.path.join(out_shp_dir, "data.shp"), driver='ESRI Shapefile')
+            del clipped
             gc.collect()
 
-            with open(path_final, 'rb') as f:
-                file_data = f.read()
+            shutil.make_archive(path_final, 'zip', out_shp_dir)
+            path_final += ".zip"
+            mimetype = 'application/zip'
+            if d_name.endswith('.zip.zip'):
+                d_name = d_name[:-4]
 
+        elif ext_orig == '.nc':
+            if not NETCDF_AVAILABLE:
+                return jsonify({'error': 'NetCDF libs ausentes (xarray/rioxarray).'}), 500
+            
             try:
-                os.remove(path_final)
-            except Exception:
-                pass # Erro silenciado para manter o terminal limpo
+                import numpy as np
 
-            return send_file(
-                io.BytesIO(file_data),
-                as_attachment=True,
-                download_name=d_name,
-                mimetype=mimetype
-            )
+                with xr.open_dataset(short_input, decode_coords="all") as ds:
+
+                    if ds.rio.crs is None:
+                        ds = ds.rio.write_crs("EPSG:4326")
+
+                    try:
+                        x_dim = ds.rio.x_dim
+                        y_dim = ds.rio.y_dim
+                    except Exception:
+                        x_dim, y_dim = None, None
+
+                    dims_espaciais = {x_dim, y_dim} if x_dim and y_dim else set()
+
+                    vars_espaciais = []
+                    vars_auxiliares = []
+                    for var in ds.data_vars:
+                        if dims_espaciais and dims_espaciais.issubset(set(ds[var].dims)):
+                            vars_espaciais.append(var)
+                        else:
+                            vars_auxiliares.append(var)
+
+                    if not vars_espaciais:
+                        vars_espaciais = list(ds.data_vars)
+                        vars_auxiliares = []
+
+                    ds_espacial = ds[vars_espaciais]
+
+                    for var in ds_espacial.variables:
+                        if ds_espacial[var].dtype.kind in ['M', 'm']:
+                            ds_espacial[var].encoding.pop('_FillValue', None)
+                            ds_espacial[var].attrs.pop('_FillValue', None)
+                            ds_espacial[var].encoding.pop('missing_value', None)
+                            ds_espacial[var].attrs.pop('missing_value', None)
+                            try:
+                                ds_espacial[var].rio.write_nodata(None, encoded=True, inplace=True)
+                                ds_espacial[var].rio.write_nodata(None, inplace=True)
+                            except:
+                                pass
+
+                    try:
+                        ds_espacial = ds_espacial.rio.clip_box(
+                            minx=float(mask_bounds[0]),
+                            miny=float(mask_bounds[1]),
+                            maxx=float(mask_bounds[2]),
+                            maxy=float(mask_bounds[3])
+                        )
+                    except Exception:
+                        pass 
+
+                    clipped = ds_espacial.rio.clip(
+                        gdf_mask.geometry.values,
+                        gdf_mask.crs,
+                        drop=True,
+                        all_touched=True
+                    )
+
+                    for var in vars_auxiliares:
+                        try:
+                            clipped[var] = ds[var]
+                        except Exception:
+                            pass
+
+                    path_final += ".nc"
+                    clipped.compute().to_netcdf(path_final)
+                    mimetype = 'application/x-netcdf'
+
+                del clipped, ds_espacial
+                gc.collect()
+
+            except Exception as e:
+                err_str = str(e)
+                err_type = str(type(e))
+                if "NoDataInBounds" in err_type or "No data found" in err_str:
+                    return jsonify({'status': 'no_data', 'message': 'Sem dados validos na area de interesse.'})
+                else:
+                    return jsonify({'status': 'error', 'message': f'Erro no recorte NetCDF.'})
+
+        else:
+            gdf_data = gpd.read_file(short_input)
+            if gdf_data.crs != gdf_mask.crs:
+                gdf_data = gdf_data.to_crs(gdf_mask.crs)
+            gdf_data.geometry = gdf_data.geometry.make_valid()
+            clipped = gpd.clip(gdf_data, gdf_mask)
+            del gdf_data
+            gc.collect()
+
+            if clipped.empty:
+                return jsonify({'status': 'no_data', 'message': 'Sem dados na area de interesse.'})
+            path_final += ext_orig
+            driv = 'GeoJSON'
+            if ext_orig == '.gpkg':
+                driv = 'GPKG'
+            elif ext_orig == '.kml':
+                driv = 'KML'
+            clipped.to_file(path_final, driver=driv)
+            del clipped
+            gc.collect()
+
+        gc.collect()
+
+        with open(path_final, 'rb') as f:
+            file_data = f.read()
+
+        try:
+            os.remove(path_final)
+        except Exception:
+            pass 
+
+        return send_file(
+            io.BytesIO(file_data),
+            as_attachment=True,
+            download_name=d_name,
+            mimetype=mimetype
+        )
 
     except Exception as e:
-        print(f"[ERRO] download_cropped: {traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
     finally:
         if tmp_mask_dir and os.path.exists(tmp_mask_dir):
-            shutil.rmtree(tmp_mask_dir)
+            shutil.rmtree(tmp_mask_dir, ignore_errors=True)
+        
+        if 'tmpdirname' in locals() and tmpdirname and os.path.exists(tmpdirname):
+            shutil.rmtree(tmpdirname, ignore_errors=True)
+            
+        del gdf_mask
+        gc.collect()
 
 
 if __name__ == '__main__':
