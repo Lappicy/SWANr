@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard SWOT (Coleção D)</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" />
+
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; }
+        
+        #map { top: 60px !important; height: calc(100vh - 60px) !important; }
+        .leaflet-top { top: 10px !important; }
+
+        .top-navbar {
+            position: fixed; top: 0; left: 0; width: 100%; height: 60px;
+            background-color: #ffffff; border-bottom: 2px solid #003366;
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            z-index: 2000; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .nav-brand { display: flex; align-items: center; gap: 10px; color: #003366; font-weight: 800; font-size: 1.3rem; letter-spacing: 0.5px;}
+        .nav-icon { color: #00509e; font-size: 34px !important; }
+        .nav-subtitle { font-size: 0.85rem; color: #666; font-weight: 600; margin-left: 5px; }
+
+        .nav-menu { display: flex; height: 100%; align-items: center; gap: 5px; }
+        .nav-item {
+            display: flex; align-items: center; gap: 6px; height: 100%; padding: 0 15px;
+            cursor: pointer; transition: 0.3s; font-weight: 600; font-size: 0.95rem;
+            color: #003366; border-bottom: 4px solid transparent; box-sizing: border-box;
+        }
+        .nav-item:hover { background-color: #f0f6fa; color: #00509e; }
+        .nav-item.active { border-bottom: 4px solid #00509e; color: #00509e; background-color: #eaf3fa; }
+        .nav-item.disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+        .nav-item .material-symbols-outlined { font-size: 20px; }
+
+        .nav-dropdown { position: relative; padding: 0 10px; }
+        .nav-dropdown .material-symbols-outlined { font-size: 26px; }
+        .dropdown-content {
+            display: none; position: absolute; top: 60px; right: 10px;
+            background-color: #fff; box-shadow: 0px 4px 12px rgba(0,0,0,0.15);
+            border: 1px solid #ddd; border-bottom-left-radius: 6px; border-bottom-right-radius: 6px;
+            padding: 12px; flex-direction: column; gap: 12px; z-index: 3000; min-width: 110px;
+        }
+        .nav-dropdown:hover .dropdown-content { display: flex; }
+        .dropdown-content label { color: #003366 !important; font-size: 0.9rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; margin: 0 !important; }
+
+        .aneel-header, .panel-tabs { display: none !important; }
+
+        .aneel-panel { 
+            top: 75px !important; 
+            height: calc(100vh - 95px) !important; 
+            border-top-left-radius: 8px; 
+            border-top-right-radius: 8px;
+            padding-top: 0px !important; 
+            overflow-y: auto;
+        }
+        
+        .panel-body { padding: 15px 15px 10px 15px !important; }
+        .panel-body form > .filter-block:first-child { margin-top: 0 !important; }
+        .filter-block { margin-bottom: 12px !important; }
+        .filter-block label { margin-bottom: 3px !important; } 
+        .section-title { margin-top: 10px !important; margin-bottom: 8px !important; }
+        
+        .aneel-panel label, .aneel-panel .sub-label, .aneel-panel .section-title, .aneel-panel .layer-label { color: #003366 !important; font-weight: 600 !important; }
+        .aneel-panel p { color: #00509e !important; }
+        .aneel-panel .btn-text { color: #dc3545 !important; } 
+
+        .leaflet-bottom.leaflet-left { margin-bottom: 15px !important; margin-left: 360px !important; }
+        
+        .leaflet-control-scale { margin-bottom: 4px !important; }
+        .leaflet-control-scale-line {
+            background: transparent !important; border: 2px solid #333 !important; border-top: none !important;
+            color: #333 !important; font-weight: 700 !important; font-size: 12px !important;
+            text-shadow: 1px 1px 1px #fff, -1px -1px 1px #fff, 1px -1px 1px #fff, -1px 1px 1px #fff !important; box-sizing: border-box;
+        }
+        
+        .coord-display {
+            background-color: #6a7b83; color: #ffffff; padding: 4px 8px; font-size: 13px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            border-radius: 2px; display: flex; align-items: center; gap: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.3); pointer-events: none; line-height: 1;
+        }
+        .coord-display .material-symbols-outlined { font-size: 15px; border-right: 1px solid rgba(255,255,255,0.4); padding-right: 6px; }
+
+        .manual-panel {
+            position: fixed; top: 75px; right: -400px; width: 360px; height: calc(100vh - 95px); background-color: #ffffff;
+            border-radius: 8px; box-shadow: -2px 4px 15px rgba(0,0,0,0.15); z-index: 2500; display: flex; flex-direction: column;
+            border: 1px solid #ddd; transition: right 0.3s ease-in-out;
+        }
+        .manual-panel.open { right: 15px; }
+        .manual-header { display: flex; align-items: center; gap: 10px; padding: 15px; background-color: #f0f6fa; border-bottom: 2px solid #00509e; border-top-left-radius: 8px; border-top-right-radius: 8px; }
+        .manual-header h3 { margin: 0; color: #003366; font-size: 1.1rem; flex-grow: 1; }
+        .manual-header .material-symbols-outlined { color: #00509e; }
+        .manual-header .close-btn { background: none; border: none; cursor: pointer; color: #dc3545; display: flex; align-items: center; justify-content: center; padding: 0; transition: 0.2s; }
+        .manual-header .close-btn:hover { color: #a71d2a; transform: scale(1.1); }
+        .manual-body { padding: 20px; overflow-y: auto; flex-grow: 1; color: #444; font-size: 0.9rem; line-height: 1.6; }
+        .manual-body h4 { color: #00509e; margin-top: 0; margin-bottom: 10px; font-size: 1rem; }
+        .manual-body p { margin-bottom: 12px; }
+        .manual-body ul { padding-left: 20px; margin-bottom: 15px;}
+        .manual-body li { margin-bottom: 8px;}
+    </style>
+</head>
+<body>
+
+    <div class="top-navbar">
+        <div class="nav-brand">
+            <span class="material-symbols-outlined nav-icon">waves</span>
+            <span>SWOT Download</span>
+            <span class="nav-subtitle">(Coleção D)</span>
+        </div>
+        <div class="nav-menu">
+            <div class="nav-item active" id="nav-swot" onclick="switchTab('swot')">
+                <span class="material-symbols-outlined">search</span> Consulta
+            </div>
+            <div class="nav-item" id="nav-camadas" onclick="switchTab('camadas')">
+                <span class="material-symbols-outlined">layers</span> Camadas
+            </div>
+            <div class="nav-item" id="nav-manual" onclick="toggleManual()">
+                <span class="material-symbols-outlined">help_center</span> Manual
+            </div>
+            <div class="nav-item" id="nav-projeto" onclick="switchTab('projeto')">
+                <span class="material-symbols-outlined">info</span> Projeto
+            </div>
+            <div class="nav-item" id="nav-referencias" onclick="switchTab('referencias')">
+                <span class="material-symbols-outlined">menu_book</span> Referências
+            </div>
+            <div class="nav-item disabled" id="nav-resultados" onclick="switchTab('resultados')">
+                <span class="material-symbols-outlined">list_alt</span> Resultados
+            </div>
+            <div style="width: 1px; height: 35px; background: #ccc; margin: 0 5px;"></div>
+            <div class="nav-item nav-dropdown" title="Mapas Base">
+                <span class="material-symbols-outlined">public</span>
+                <div class="dropdown-content">
+                    <label><input type="radio" name="basemap_sel" value="sat" checked onchange="trocarBasemap('sat')"> Satélite</label>
+                    <label><input type="radio" name="basemap_sel" value="street" onchange="trocarBasemap('street')"> Ruas</label>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <div class="aneel-panel" id="main-panel">
+        <div id="view-swot" class="panel-body">
+            <form id="searchForm">
+                <div class="filter-block">
+                    <label>1. Produto (Coleção D)</label>
+                    <select id="produto" name="produto" onchange="toggleSubproducts()">
+                        <option value="" disabled selected>Selecione...</option>
+                        <option value="RiverSP">SWOT_L2_HR_RiverSP_D</option>
+                        <option value="LakeSP">SWOT_L2_HR_LakeSP_D</option>
+                        <option value="PIXC">SWOT_L2_HR_PIXC_D</option>
+                        <option value="Raster">SWOT_L2_HR_Raster_D</option>
+                    </select>
+
+                    <div id="sub-river" class="sub-opts hidden">
+                        <label class="sub-label">Subproduto</label>
+                        <select name="subproduto" class="sub-select"><option value="Reach">Reach</option><option value="Node">Node</option></select>
+                        <label class="sub-label">Continente</label>
+                        <select class="sub-select" disabled><option selected>América do Sul (SA)</option></select>
+                        <input type="hidden" name="continente" value="SA">
+                    </div>
+                    <div id="sub-lake" class="sub-opts hidden">
+                        <label class="sub-label">Tipo</label>
+                        <select name="subproduto" class="sub-select"><option value="Prior">Prior</option><option value="Obs">Obs</option><option value="Unassigned">Unassigned</option><option value="Avg">Avg</option></select>
+                        <label class="sub-label">Continente</label>
+                        <select class="sub-select" disabled><option selected>América do Sul (SA)</option></select>
+                        <input type="hidden" name="continente" value="SA">
+                    </div>
+                    <div id="sub-raster" class="sub-opts hidden">
+                        <label class="sub-label">Resolução</label>
+                        <select name="resolucao" class="sub-select"><option value="100m">100m</option><option value="250m">250m</option></select>
+                    </div>
+                </div>
+
+                <div class="filter-block">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                        <label style="margin: 0;">2. Área de Interesse</label>
+                        <button type="button" class="btn-text" onclick="limparArea()" style="margin: 0; padding: 0; font-size: 0.75rem; color: #dc3545 !important; text-decoration: none; display: flex; align-items: center; gap: 2px;">
+                            <span class="material-symbols-outlined" style="font-size: 14px;">delete</span> Limpar Área
+                        </button>
+                    </div>
+                    <div class="aoi-tabs">
+                        <div class="upload-container" style="padding: 5px; margin-bottom: 5px;">
+                            <p style="font-size:0.75rem; margin:0 0 5px;">Upload (.zip, .gpkg, .kml, .kmz)</p>
+                            <input type="file" id="userShapeInput" accept=".zip,.gpkg,.kml,.kmz,.json,.geojson" onchange="uploadShape()" style="font-size: 0.7rem;">
+                            <div id="shapeStatus" style="font-size:0.7rem; color:green; min-height:12px; margin-top:2px;"></div>
+                            <input type="hidden" id="uploadedShapeName">
+                        </div>
+                        <p style="text-align:center; font-size:0.75rem; margin: 3px 0;">— OU —</p>
+                        <select id="brazil_states" onchange="aplicarFiltroEstado()">
+                            <option value="">Selecione um Estado...</option>
+                            <option value="BR">BRASIL (Todo)</option>
+                            <optgroup label="Centro-Oeste"><option value="DF">DF</option><option value="GO">GO</option><option value="MT">MT</option><option value="MS">MS</option></optgroup>
+                            <optgroup label="Norte"><option value="AC">AC</option><option value="AP">AP</option><option value="AM">AM</option><option value="PA">PA</option><option value="RO">RO</option><option value="RR">RR</option><option value="TO">TO</option></optgroup>
+                            <optgroup label="Nordeste"><option value="AL">AL</option><option value="BA">BA</option><option value="CE">CE</option><option value="MA">MA</option><option value="PB">PB</option><option value="PE">PE</option><option value="PI">PI</option><option value="RN">RN</option><option value="SE">SE</option></optgroup>
+                            <optgroup label="Sudeste"><option value="ES">ES</option><option value="MG">MG</option><option value="RJ">RJ</option><option value="SP">SP</option></optgroup>
+                            <optgroup label="Sul"><option value="RS">RS</option><option value="SC">SC</option><option value="PR">PR</option></optgroup>
+                        </select>
+                        <p style="text-align:center; font-size:0.75rem; margin: 3px 0;">— OU DESENHE □ NO MAPA —</p>
+                    </div>
+                    <div class="coord-grid small-inputs">
+                        <input type="number" step="any" id="lat_min" name="lat_min" placeholder="Lat Min" readonly>
+                        <input type="number" step="any" id="lat_max" name="lat_max" placeholder="Lat Max" readonly>
+                        <input type="number" step="any" id="lon_min" name="lon_min" placeholder="Lon Min" readonly>
+                        <input type="number" step="any" id="lon_max" name="lon_max" placeholder="Lon Max" readonly>
+                    </div>
+                </div>
+
+                <div class="filter-block">
+                    <label>3. Período</label>
+                    <div id="date-msg" class="date-warning hidden" style="padding: 5px; margin-bottom: 5px; font-size: 0.75rem;"></div>
+                    <div class="coord-grid">
+                        <input type="date" name="start_date" id="start_date" min="2022-02-15" onchange="validarDatas()">
+                        <input type="date" name="end_date" id="end_date" min="2022-02-15" onchange="validarDatas()">
+                    </div>
+                </div>
+
+                <div class="filter-block">
+                    <label style="font-size:0.8rem;">4. Identificação (Opcional)</label>
+                    <div class="grid-3">
+                        <input type="number" name="cycle" placeholder="Cycle">
+                        <input type="number" name="pass" placeholder="Pass">
+                        <input type="text" name="tile" placeholder="Tile">
+                    </div>
+                </div>
+            </form>
+            <div id="btn-container" style="margin-top:10px;">
+                <button type="button" class="btn-aneel" onclick="buscarDados()">Consultar</button>
+            </div>
+        </div>
+
+        <div id="view-camadas" class="panel-body hidden">
+            <h3 class="section-title">Limites</h3>
+            <div class="layer-item">
+                <label class="switch">
+                    <input type="checkbox" onchange="toggleCamada(this, 'limites_BR', 'Limites do Brasil', '#000', 'linha')">
+                    <span class="slider round"></span>
+                </label>
+                <span class="layer-label">Limites do Brasil</span>
+            </div>
+            
+            <h3 class="section-title">ANA (Referência)</h3>
+            <div class="layer-item">
+                <label class="switch">
+                    <input type="checkbox" onchange="toggleCamada(this, 'Estacoes_hidrometeorologicas_ANA', 'Estações ANA', '#0099FF', 'ponto')">
+                    <span class="slider round"></span>
+                </label>
+                <span class="layer-label">Estações Hidrometeorológicas</span>
+            </div>
+            <div class="layer-item">
+                <label class="switch">
+                    <input type="checkbox" onchange="toggleCamada(this, 'SNIRH_OttobaciaNv1', 'Ottobacias N1', '#FFD700', 'linha')">
+                    <span class="slider round"></span>
+                </label>
+                <span class="layer-label">Ottobacias (Nível 1)</span>
+            </div>
+
+            <h3 class="section-title">SWOT</h3>
+            <div class="layer-item">
+                <label class="switch">
+                    <input type="checkbox" onchange="toggleCamada(this, 'SWOT_orbits_BR', 'Órbitas SWOT', '#FF0000', 'linha')">
+                    <span class="slider round"></span>
+                </label>
+                <span class="layer-label">Órbitas (Passes)</span>
+            </div>
+            <div class="layer-item">
+                <label class="switch">
+                    <input type="checkbox" onchange="toggleCamada(this, 'SWOT_tiles_BR', 'Grades SWOT', '#00FFFF', 'linha')">
+                    <span class="slider round"></span>
+                </label>
+                <span class="layer-label">Grades (Tiles)</span>
+            </div>
+        </div>
+
+        <div id="view-projeto" class="panel-body hidden">
+            <h3 class="section-title" style="display: flex; align-items: center; gap: 8px;">
+                <span class="material-symbols-outlined" style="color: #00509e;">lightbulb</span> 
+                Sobre o Projeto
+            </h3>
+            <p style="font-size: 0.85rem; color: #555; margin-bottom: 15px;">
+                Conheça a equipe:
+            </p>
+
+            <div style="display: flex; flex-direction: column; gap: 12px; padding-bottom: 20px;">
+                
+                <div style="background: #f4f8fb; border-left: 4px solid #00509e; padding: 12px 15px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                    <h4 style="margin: 0 0 10px 0; color: #003366; font-size: 0.95rem; display: flex; align-items: center; gap: 6px;">
+                        <span class="material-symbols-outlined" style="font-size: 18px;">school</span> 
+                        Universidade de Brasília (UnB)
+                    </h4>
+                    <ul style="margin: 0; padding-left: 20px; color: #444; font-size: 0.85rem; column-count: 2; column-gap: 20px; line-height: 1.6;">
+                        <li>Rejane Cicerelli</li>
+                        <li>Tati de Almeida</li>
+                        <li>Daniel Beltrão</li>
+                        <li>Luana Sales</li>
+                        <li>Thiago Lappicy</li>
+                        <li>Leonardo Moura</li>
+                        <li>Beatriz Brito</li>
+                        <li>Joaquim Araujo</li>
+                        <li>Reuel Ebezener</li>
+                    </ul>
+                </div>
+
+                <div style="background: #f4f8fb; border-left: 4px solid #0099FF; padding: 12px 15px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                    <h4 style="margin: 0 0 10px 0; color: #003366; font-size: 0.95rem; display: flex; align-items: center; gap: 6px;">
+                        <span class="material-symbols-outlined" style="font-size: 18px;">water_drop</span> 
+                        Agência Nacional de Águas (ANA)
+                    </h4>
+                    <ul style="margin: 0; padding-left: 20px; color: #444; font-size: 0.85rem; column-count: 2; column-gap: 20px; line-height: 1.6;">
+                        <li>Alexandre Abdalla</li>
+                        <li>Alexandre Amorim</li>
+                        <li>Ana Clara Matos</li>
+                        <li>Cássio Rampinelli</li>
+                        <li>Dhalton Ventura</li>
+                        <li>Klaus Reitz</li>
+                        <li>Luis Cordeiro</li>
+                        <li>Marcos Pufal</li>
+                        <li>Maurício Cordeiro</li>
+                        <li>Saulo de Souza</li>
+                        <li>Teresa Carvalho</li>
+                        <li>Vinícius Roman</li>
+                    </ul>
+                </div>
+
+                <div style="background: #f4f8fb; border-left: 4px solid #FFD700; padding: 12px 15px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                    <h4 style="margin: 0 0 10px 0; color: #003366; font-size: 0.95rem; display: flex; align-items: center; gap: 6px;">
+                        <span class="material-symbols-outlined" style="font-size: 18px;">public</span> 
+                        Outros Colaboradores
+                    </h4>
+                    <ul style="margin: 0; padding-left: 20px; color: #444; font-size: 0.85rem; line-height: 1.6;">
+                        <li>Renato Frasson (JPL / NASA)</li>
+                        <li>Augusto Getirana (Goddard / NASA)</li>
+                        <li>Mohammadjavad Tourian (Stuttgart)</li>
+                    </ul>
+                </div>
+
+            </div>
+        </div>
+
+        <div id="view-referencias" class="panel-body hidden">
+            <h3 class="section-title">Referências Bibliográficas</h3>
+            <div style="text-align: center; margin-top: 50px; color: #003366;">
+                <span class="material-symbols-outlined" style="font-size: 48px; color: #00509e; margin-bottom: 10px;">engineering</span>
+                <p style="font-size: 1.1rem; font-weight: 500; margin: 0;">Estamos em construção</p>
+                <p style="font-size: 0.85rem; margin-top: 5px;">Em breve esta seção será atualizada.</p>
+            </div>
+        </div>
+
+        <div id="view-resultados" class="panel-body hidden" style="position: relative; display: flex; flex-direction: column;">
+            <div id="results-meta" class="hidden">
+                <div class="results-summary"><span id="total-count">0</span> arquivos • <span id="total-size">0 MB</span></div>
+                <div class="results-toolbar" style="padding: 8px 10px; border-bottom: 1px solid #eee; background: #fafafa; display: flex; align-items: center;">
+                    <label style="font-weight:normal; font-size:0.85rem; display:flex; align-items:center; cursor:pointer; margin:0; color:#003366; font-weight: 600;">
+                        <input type="checkbox" id="select-all" onclick="toggleSelectAll()" style="margin-right:8px; cursor: pointer;"> Selecionar Todos
+                    </label>
+                </div>
+            </div>
+            
+            <div id="results-container-wrapper" style="position: relative; flex-grow: 1; min-height: 200px; display: flex; flex-direction: column;">
+                <div id="results-list" class="results-list hidden"></div>
+                <div id="progress-container" class="loading-overlay hidden">
+                    <div class="loader-content">
+                        <div class="loader-spinner"></div>
+                        <p style="margin-top: 15px; font-weight: 500; color: #00509e;">Buscando na NASA...</p>
+                    </div>
+                    <div class="progress-bar-bg"><div id="progress-fill"></div></div>
+                </div>
+            </div>
+
+            <button id="btn-download-selected" type="button" class="btn-aneel download hidden" onclick="baixarSelecionados()" disabled>
+                <span class="material-symbols-outlined">download</span> Baixar Selecionados
+            </button>
+            <button type="button" class="btn-text" onclick="resetarConsulta()" style="margin-top: 15px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; color: #00509e !important;">
+                <span class="material-symbols-outlined" style="font-size: 18px;">refresh</span> Voltar e Iniciar Nova Consulta
+            </button>
+        </div>
+    </div>
+
+    <div id="manual-panel" class="manual-panel">
+        <div class="manual-header">
+            <span class="material-symbols-outlined">help_center</span>
+            <h3>Manual do Usuário</h3>
+            <button class="close-btn" onclick="toggleManual()" title="Fechar">
+                <span class="material-symbols-outlined">close</span>
+            </button>
+        </div>
+        <div class="manual-body">
+            <h4>Como utilizar a Plataforma</h4>
+            <p>Siga os passos abaixo para realizar o download dos dados:</p>
+            <ul>
+                <li><b>Passo 1:</b> Selecione o Produto e Subproduto desejado.</li>
+                <li><b>Passo 2:</b> Defina sua Área de Interesse (Upload, Estado ou Desenho no mapa).</li>
+                <li><b>Passo 3:</b> Escolha a Data Inicial e a Data Final.</li>
+                <li><b>Passo 4:</b> Clique em Consultar. O sistema buscará os arquivos na NASA.</li>
+                <li><b>Passo 5:</b> Selecione os arquivos e clique em Baixar. Uma janela se abrirá para escolher a pasta.</li>
+            </ul>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="{{ url_for('static', filename='script.js') }}?v=999"></script>
+</body>
+</html>
