@@ -7,12 +7,11 @@ import tempfile
 import zipfile
 import glob
 import uuid
-import traceback
 import re
 import io
 import warnings
 from collections import OrderedDict
-from flask import Flask, render_template, request, jsonify, Response, send_file, after_this_request
+from flask import Flask, render_template, request, jsonify, Response, send_file
 from werkzeug.utils import secure_filename
 import earthaccess
 import geopandas as gpd
@@ -21,18 +20,15 @@ from shapely.geometry import shape, box
 from shapely.ops import transform as shapely_transform
 from dotenv import load_dotenv
 
-# Silencia avisos inofensivos
 warnings.filterwarnings("ignore", message="Dataset has no geotransform.*")
 warnings.filterwarnings("ignore", message=".*NotGeoreferencedWarning.*")
 
-# --- CONFIGURAÇÃO DE DRIVERS (Fiona) ---
 import fiona
 fiona.drvsupport.supported_drivers['KML'] = 'rw'
 fiona.drvsupport.supported_drivers['LIBKML'] = 'rw'
 fiona.drvsupport.supported_drivers['GPX'] = 'rw'
 fiona.drvsupport.supported_drivers['GPKG'] = 'rw'
 
-# Verifica suporte a NetCDF
 NETCDF_AVAILABLE = False
 try:
     import xarray as xr
@@ -43,7 +39,6 @@ except ImportError:
 
 app = Flask(__name__)
 
-# --- 1. CREDENCIAIS & CONFIGURAÇÕES ---
 load_dotenv()
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -86,6 +81,18 @@ def _cache_set(cache, key, value, max_size):
     cache[key] = value
     if len(cache) > max_size:
         cache.popitem(last=False)
+
+
+def get_json_body():
+    return request.get_json(silent=True) or {}
+
+
+def upload_path(filename):
+    safe_name = secure_filename(filename or "")
+    if not safe_name:
+        return None
+    return os.path.join(app.config['UPLOAD_FOLDER'], safe_name)
+
 
 def remover_z(geom):
     return shapely_transform(lambda x, y, *_: (x, y), geom)
@@ -195,7 +202,9 @@ def upload_user_shape():
         return jsonify({'error': 'Um arquivo .shp nao funciona sozinho! '
                         'Por favor, compacte todos os arquivos do shapefile em um arquivo .ZIP e faca o upload.'}), 400
 
-    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    filepath = upload_path(filename)
+    if not filepath:
+        return jsonify({'error': 'Nome do arquivo invalido.'}), 400
     file.save(filepath)
 
     temp_dir = None
@@ -300,7 +309,7 @@ def buscar_dados():
     gdf_tiles = None
     inter = None
     try:
-        d = request.json
+        d = get_json_body()
         prod = d.get('produto')
         start_date = d.get('start_date')
         end_date = d.get('end_date')
@@ -326,8 +335,8 @@ def buscar_dados():
         tile_val = str(d.get('tile', '')).strip() if str(d.get('tile', '')).strip() else "*"
         cont_val = d.get('continente') if d.get('continente') else "SA"
 
-        mask_name = d.get('shape_filename')
-        state_uf = d.get('state_uf')
+        mask_name = secure_filename(d.get('shape_filename', '')) or None
+        state_uf = str(d.get('state_uf') or '').upper()
 
         bbox_geom = None
         if d.get('lon_min') and str(d.get('lon_min')).strip() != "":
@@ -342,7 +351,7 @@ def buscar_dados():
         if (bbox_geom or mask_name or state_uf) and pass_val == "*" and tile_val == "*":
             try:
                 if mask_name:
-                    mask_path = os.path.join(app.config['UPLOAD_FOLDER'], mask_name)
+                    mask_path = upload_path(mask_name)
                     if os.path.exists(mask_path):
                         gdf_mask, _ = carregar_geodataframe(mask_path)
                 elif state_uf and state_uf != 'BR':
@@ -515,7 +524,7 @@ def baixar_selecionados():
     try:
         if not auth:
             return jsonify({"status": "error", "message": "Falha no login da NASA."}), 500
-        data = request.json
+        data = get_json_body()
         links = data.get('arquivos', [])
         session = auth.get_session()
         sucessos = 0
@@ -541,29 +550,27 @@ def baixar_selecionados():
 
 @app.route('/download_cropped', methods=['POST'])
 def download_cropped():
-    
-    # --- ROTINA DE LIMPEZA SILENCIOSA CORRIGIDA ---
     try:
         agora = time.time()
         for item in os.listdir(app.config['UPLOAD_FOLDER']):
             caminho_item = os.path.join(app.config['UPLOAD_FOLDER'], item)
             idade_segundos = agora - os.path.getmtime(caminho_item)
-            
-            # Deleta arquivos residuais que travaram, mas poupa a mascara por 2 horas
+
             if (item.startswith('res_') and idade_segundos > 120) or (idade_segundos > 7200):
                 if os.path.isfile(caminho_item):
-                    try: os.remove(caminho_item)
-                    except: pass
+                    try:
+                        os.remove(caminho_item)
+                    except Exception:
+                        pass
                 elif os.path.isdir(caminho_item):
                     shutil.rmtree(caminho_item, ignore_errors=True)
     except Exception:
         pass
-    # ------------------------------------
 
-    d = request.json
+    d = get_json_body()
     url = d.get('granule_url')
-    mask_name = d.get('shape_filename')
-    state_uf = d.get('state_uf')
+    mask_name = secure_filename(d.get('shape_filename', '')) or None
+    state_uf = str(d.get('state_uf') or '').upper()
     lon_min, lat_min, lon_max, lat_max = d.get('lon_min'), d.get('lat_min'), d.get('lon_max'), d.get('lat_max')
     has_bbox = all(v is not None and str(v).strip() != "" for v in [lon_min, lat_min, lon_max, lat_max])
 
@@ -577,7 +584,9 @@ def download_cropped():
     gdf_mask = None
     try:
         if mask_name:
-            mask_path = os.path.join(app.config['UPLOAD_FOLDER'], mask_name)
+            mask_path = upload_path(mask_name)
+            if not mask_path or not os.path.exists(mask_path):
+                return jsonify({"error": "Mascara enviada nao encontrada."}), 400
             gdf_mask, tmp_mask_dir = carregar_geodataframe(mask_path)
         elif state_uf and state_uf != 'BR':
             gdf_mask, erro = _carregar_estado_gpkg(state_uf)
@@ -607,24 +616,21 @@ def download_cropped():
         ext_orig = os.path.splitext(real_filename)[1].lower()
         short_input = os.path.join(tmpdirname, f"in{ext_orig}")
 
-        # --- NOVO: SISTEMA DE RETENTATIVAS (ANTI-FALHA E TIMEOUT) ---
         sucesso_download = False
-        for tentativa in range(4): 
+        for tentativa in range(4):
             try:
-                # Timeout evita que o request fique pendurado para sempre no navegador
                 with session.get(url, stream=True, timeout=90) as r:
                     r.raise_for_status()
                     with open(short_input, 'wb') as f:
                         shutil.copyfileobj(r.raw, f)
                 sucesso_download = True
                 break
-            except Exception as e:
+            except Exception:
                 print(f"[AVISO] Gargalo de Rede/NASA (Tentativa {tentativa+1}/4)")
-                time.sleep(2) 
-        
+                time.sleep(2)
+
         if not sucesso_download:
             return jsonify({'error': 'A NASA recusou a conexão após múltiplas tentativas. Tente selecionar menos arquivos por vez.'}), 502
-        # ------------------------------------------------------------
 
         path_final = os.path.join(app.config['UPLOAD_FOLDER'], f"res_{uuid.uuid4().hex}")
         mimetype = "application/octet-stream"
@@ -707,7 +713,7 @@ def download_cropped():
                             try:
                                 ds_espacial[var].rio.write_nodata(None, encoded=True, inplace=True)
                                 ds_espacial[var].rio.write_nodata(None, inplace=True)
-                            except:
+                            except Exception:
                                 pass
 
                     try:
@@ -718,7 +724,7 @@ def download_cropped():
                             maxy=float(mask_bounds[3])
                         )
                     except Exception:
-                        pass 
+                        pass
 
                     clipped = ds_espacial.rio.clip(
                         gdf_mask.geometry.values,

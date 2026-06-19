@@ -1,24 +1,4 @@
-/* =========================================================
-   SWOT Dashboard — script.js
-   =========================================================
-   Melhorias aplicadas:
-   - alert() substituído por toasts não-bloqueantes
-   - Downloads em paralelo (3 simultâneos) em vez de sequencial
-   - Throttle no mousemove (reduz carga de CPU)
-   - Timeout de 3 min por arquivo no download_cropped
-   - trocarBasemap com verificação de hasLayer (evita erro Leaflet)
-   - Sanitização de HTML no popup para evitar XSS
-   - URL.revokeObjectURL após blob download (evita memory leak)
-   - switchTab não quebra o layout do view-resultados
-   - Carregamento de camadas com cache: não re-faz fetch se já existe
-   ========================================================= */
-
-// =========================================================
-// 1. MAPA E CAMADAS BASE
-// =========================================================
-
 var map = L.map('map', { zoomControl: false }).setView([-14.235, -51.925], 4);
-
 var satellite = L.tileLayer(
     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     { attribution: 'Esri', maxZoom: 19 }
@@ -34,130 +14,152 @@ var labels = L.tileLayer(
 
 satellite.addTo(map);
 labels.addTo(map);
-
 L.control.zoom({ position: 'topright' }).addTo(map);
 L.control.scale({ position: 'bottomleft', metric: true, imperial: true }).addTo(map);
 
-// Controle de coordenadas
 var CoordControl = L.Control.extend({
     options: { position: 'bottomleft' },
     onAdd: function () {
         var container = L.DomUtil.create('div', 'coord-display leaflet-control');
-        container.innerHTML = '<span class="material-symbols-outlined">filter_center_focus</span>'
-                            + '<span id="map-coords">0,000 0,000 Graus</span>';
+        container.innerHTML = '<i data-lucide="crosshair"></i><span id="map-coords">0,000 0,000 Graus</span>';
         return container;
     }
 });
-map.addControl(new CoordControl());
 
-// MELHORIA: throttle no mousemove — executa no máximo 1x por 50ms
-var _lastMoveTime = 0;
+map.addControl(new CoordControl());
+renderIcons();
+
+var lastMoveTime = 0;
+var drawnItems = new L.FeatureGroup();
+var uploadedLayer = null;
+var stateLayer = null;
+var activeLayers = {};
+
+map.addLayer(drawnItems);
+
+var drawControl = new L.Control.Draw({
+    draw: {
+        polygon: false,
+        polyline: false,
+        circle: false,
+        marker: false,
+        circlemarker: false,
+        rectangle: { shapeOptions: { color: '#1677b8' } }
+    },
+    edit: { featureGroup: drawnItems, remove: true },
+    position: 'topright'
+});
+
+map.addControl(drawControl);
+
 map.on('mousemove', function (e) {
     var now = Date.now();
-    if (now - _lastMoveTime < 50) return;
-    _lastMoveTime = now;
+    if (now - lastMoveTime < 50) return;
+    lastMoveTime = now;
+
     var lat = e.latlng.lat.toFixed(3).replace('.', ',');
     var lng = e.latlng.lng.toFixed(3).replace('.', ',');
     var coordSpan = document.getElementById('map-coords');
     if (coordSpan) coordSpan.innerText = lng + ' ' + lat + ' Graus';
 });
 
-document.getElementById('map').style.cursor = 'pointer';
+map.on(L.Draw.Event.CREATED, function (e) {
+    limparTudoMenos('draw');
+    drawnItems.addLayer(e.layer);
+    updateCoords(e.layer.getBounds());
+});
 
-// =========================================================
-// 2. TROCA DE BASEMAP
-// =========================================================
+map.on(L.Draw.Event.DELETED, function () {
+    updateCoords(null);
+});
 
-function trocarBasemap(tipo) {
-    // CORREÇÃO: verifica hasLayer antes de add/remove para evitar erros do Leaflet
-    if (tipo === 'sat') {
-        if (!map.hasLayer(satellite)) map.addLayer(satellite);
-        if (!map.hasLayer(labels))   map.addLayer(labels);
-        if (map.hasLayer(street))    map.removeLayer(street);
-    } else {
-        if (!map.hasLayer(street))   map.addLayer(street);
-        if (map.hasLayer(satellite)) map.removeLayer(satellite);
-        if (map.hasLayer(labels))    map.removeLayer(labels);
-    }
+function renderIcons() {
+    if (window.lucide) window.lucide.createIcons();
 }
 
-// =========================================================
-// 3. LOADING / CURSOR
-// =========================================================
+function icon(name) {
+    return '<i data-lucide="' + name + '"></i>';
+}
 
-function startLoading() { document.getElementById('map').classList.add('map-loading'); }
-function stopLoading()  { document.getElementById('map').classList.remove('map-loading'); }
+function setButton(button, iconName, text) {
+    if (!button) return;
+    button.innerHTML = icon(iconName) + '<span>' + escHtml(text) + '</span>';
+    renderIcons();
+}
 
-// =========================================================
-// 4. TOASTS (substitui alert())
-// =========================================================
+function startLoading() {
+    document.getElementById('map').classList.add('map-loading');
+}
 
-/**
- * Exibe uma notificação flutuante não-bloqueante.
- * @param {string} msg       Mensagem (suporta HTML simples)
- * @param {'info'|'success'|'warning'|'error'} type
- * @param {number} duration  Duração em ms (padrão: 4000)
- */
+function stopLoading() {
+    document.getElementById('map').classList.remove('map-loading');
+}
+
 function showToast(msg, type, duration) {
     type = type || 'info';
     duration = duration || 4000;
+
     var container = document.getElementById('toast-container');
     if (!container) return;
 
     var toast = document.createElement('div');
     toast.className = 'toast toast-' + type;
-    toast.innerHTML = msg;
+    toast.textContent = msg;
     container.appendChild(toast);
-
-    // Forçar reflow para a transição CSS funcionar
     void toast.offsetWidth;
     toast.classList.add('show');
 
     setTimeout(function () {
         toast.classList.remove('show');
-        setTimeout(function () { toast.remove(); }, 300);
+        setTimeout(function () { toast.remove(); }, 250);
     }, duration);
 }
 
-// =========================================================
-// 5. NAVEGAÇÃO DE ABAS
-// =========================================================
-
-function switchTab(t) {
-    var p = document.getElementById('main-panel');
-    var clickedNav = document.getElementById('nav-' + t);
-    var isAlreadyActive = clickedNav && clickedNav.classList.contains('active');
-
-    if (isAlreadyActive && p.style.display !== 'none') {
-        p.style.display = 'none';
+function trocarBasemap(tipo) {
+    if (tipo === 'sat') {
+        if (!map.hasLayer(satellite)) map.addLayer(satellite);
+        if (!map.hasLayer(labels)) map.addLayer(labels);
+        if (map.hasLayer(street)) map.removeLayer(street);
         return;
     }
 
-    p.style.display = 'flex';
+    if (!map.hasLayer(street)) map.addLayer(street);
+    if (map.hasLayer(satellite)) map.removeLayer(satellite);
+    if (map.hasLayer(labels)) map.removeLayer(labels);
+}
 
-    document.querySelectorAll('.panel-body').forEach(function (e) {
-        e.classList.add('hidden');
+function switchTab(t) {
+    var panel = document.getElementById('main-panel');
+    var clickedNav = document.getElementById('nav-' + t);
+    var isAlreadyActive = clickedNav && clickedNav.classList.contains('active');
+
+    if (isAlreadyActive && panel.style.display !== 'none') {
+        panel.style.display = 'none';
+        return;
+    }
+
+    panel.style.display = 'flex';
+
+    document.querySelectorAll('.panel-body').forEach(function (view) {
+        view.classList.add('hidden');
     });
 
-    document.querySelectorAll('.nav-item:not(#nav-manual)').forEach(function (e) {
-        e.classList.remove('active');
+    document.querySelectorAll('.nav-item:not(#nav-manual)').forEach(function (item) {
+        item.classList.remove('active');
     });
 
-    document.getElementById('view-' + t).classList.remove('hidden');
+    var view = document.getElementById('view-' + t);
+    if (view) view.classList.remove('hidden');
     if (clickedNav) clickedNav.classList.add('active');
 }
 
 function toggleManual() {
     var panel = document.getElementById('manual-panel');
-    var btn   = document.getElementById('nav-manual');
+    var btn = document.getElementById('nav-manual');
     var opening = !panel.classList.contains('open');
     panel.classList.toggle('open', opening);
-    btn.classList.toggle('active', opening);
+    if (btn) btn.classList.toggle('active', opening);
 }
-
-// =========================================================
-// 6. FORMULÁRIO — RESET E VALIDAÇÃO
-// =========================================================
 
 function resetarConsulta() {
     document.getElementById('searchForm').reset();
@@ -172,87 +174,66 @@ function resetarConsulta() {
 }
 
 function toggleSubproducts() {
-    document.querySelectorAll('.sub-opts').forEach(function (e) { e.classList.add('hidden'); });
-    document.querySelectorAll('.sub-opts select').forEach(function (s) { s.disabled = true; });
+    document.querySelectorAll('.sub-opts').forEach(function (el) {
+        el.classList.add('hidden');
+    });
+    document.querySelectorAll('.sub-opts select').forEach(function (select) {
+        select.disabled = true;
+    });
 
-    var p = document.getElementById('produto').value;
+    var product = document.getElementById('produto').value;
     var divId = '';
-    if (p === 'RiverSP') divId = 'sub-river';
-    else if (p === 'LakeSP') divId = 'sub-lake';
-    else if (p === 'Raster') divId = 'sub-raster';
 
-    if (divId) {
-        var d = document.getElementById(divId);
-        d.classList.remove('hidden');
-        d.querySelectorAll('select').forEach(function (s) { s.disabled = false; });
-    }
+    if (product === 'RiverSP') divId = 'sub-river';
+    if (product === 'LakeSP') divId = 'sub-lake';
+    if (product === 'Raster') divId = 'sub-raster';
+
+    if (!divId) return;
+
+    var target = document.getElementById(divId);
+    target.classList.remove('hidden');
+    target.querySelectorAll('select').forEach(function (select) {
+        select.disabled = false;
+    });
 }
 
 function validarDatas() {
-    var s   = document.getElementById('start_date');
-    var e   = document.getElementById('end_date');
+    var start = document.getElementById('start_date');
+    var end = document.getElementById('end_date');
     var msg = document.getElementById('date-msg');
     var min = new Date('2022-02-15T00:00:00');
     var calValEnd = new Date('2023-07-26T23:59:59');
-
-    var d1 = s.value ? new Date(s.value + 'T00:00:00') : null;
-    var d2 = e.value ? new Date(e.value + 'T00:00:00') : null;
+    var d1 = start.value ? new Date(start.value + 'T00:00:00') : null;
+    var d2 = end.value ? new Date(end.value + 'T00:00:00') : null;
 
     msg.classList.add('hidden');
-    msg.style.color = '#856404';
-    msg.style.backgroundColor = '#fff3cd';
-    msg.style.borderColor = '#ffeeba';
+    msg.textContent = '';
+    msg.style.color = '#7a5200';
+    msg.style.backgroundColor = '#fff6df';
+    msg.style.borderColor = '#f4d58d';
 
     if ((d1 && d1 < min) || (d2 && d2 < min)) {
-        // CORREÇÃO: substituído alert() por toast + limpeza de campo
-        showToast('⚠️ O satélite não estava disponível antes de 15/02/2022.', 'warning');
-        if (d1 && d1 < min) s.value = '';
-        if (d2 && d2 < min) e.value = '';
+        showToast('O satélite não estava disponível antes de 15/02/2022.', 'warning');
+        if (d1 && d1 < min) start.value = '';
+        if (d2 && d2 < min) end.value = '';
         return;
     }
 
     if (d1 && d2 && d1 > d2) {
-        msg.innerHTML = '❌ <strong>Erro:</strong> Data inicial deve ser anterior à data final.';
-        msg.style.color = '#721c24';
-        msg.style.backgroundColor = '#f8d7da';
-        msg.style.borderColor = '#f5c6cb';
+        msg.textContent = 'Data inicial deve ser anterior à data final.';
+        msg.style.color = '#7d1b25';
+        msg.style.backgroundColor = '#fff0f2';
+        msg.style.borderColor = '#facbd2';
         msg.classList.remove('hidden');
-        e.value = '';
+        end.value = '';
         return;
     }
 
     if ((d1 && d1 <= calValEnd) || (d2 && d2 <= calValEnd)) {
-        msg.innerText = '⚠️ Esse período engloba a fase de Cal/Val.';
+        msg.textContent = 'Esse período engloba a fase de Cal/Val.';
         msg.classList.remove('hidden');
     }
 }
-
-// =========================================================
-// 7. ÁREA DE INTERESSE — DESENHO E UPLOAD
-// =========================================================
-
-var drawnItems  = new L.FeatureGroup(); map.addLayer(drawnItems);
-var uploadedLayer = null;
-var stateLayer    = null;
-var activeLayers  = {};
-
-var drawControl = new L.Control.Draw({
-    draw: {
-        polygon: false, polyline: false, circle: false,
-        marker: false, circlemarker: false,
-        rectangle: { shapeOptions: { color: '#0079c1' } }
-    },
-    edit: { featureGroup: drawnItems, remove: true },
-    position: 'topright'
-});
-map.addControl(drawControl);
-
-map.on(L.Draw.Event.CREATED, function (e) {
-    limparTudoMenos('draw');
-    drawnItems.addLayer(e.layer);
-    updateCoords(e.layer.getBounds());
-});
-map.on(L.Draw.Event.DELETED, function () { updateCoords(null); });
 
 function limparArea() {
     limparTudoMenos('reset');
@@ -261,55 +242,67 @@ function limparArea() {
 
 function limparTudoMenos(tipo) {
     if (tipo !== 'draw') drawnItems.clearLayers();
+
     if (tipo !== 'upload') {
-        if (uploadedLayer) { map.removeLayer(uploadedLayer); uploadedLayer = null; }
+        if (uploadedLayer) {
+            map.removeLayer(uploadedLayer);
+            uploadedLayer = null;
+        }
         document.getElementById('uploadedShapeName').value = '';
         document.getElementById('shapeStatus').innerText = '';
         document.getElementById('userShapeInput').value = '';
     }
+
     if (tipo !== 'state') {
-        if (stateLayer) { map.removeLayer(stateLayer); stateLayer = null; }
+        if (stateLayer) {
+            map.removeLayer(stateLayer);
+            stateLayer = null;
+        }
         document.getElementById('brazil_states').value = '';
     }
 }
 
-function updateCoords(b) {
-    if (!b) {
+function updateCoords(bounds) {
+    if (!bounds) {
         ['lat_min', 'lat_max', 'lon_min', 'lon_max'].forEach(function (id) {
             document.getElementById(id).value = '';
         });
         return;
     }
-    document.getElementById('lat_min').value = b.getSouth().toFixed(4);
-    document.getElementById('lat_max').value = b.getNorth().toFixed(4);
-    document.getElementById('lon_min').value = b.getWest().toFixed(4);
-    document.getElementById('lon_max').value = b.getEast().toFixed(4);
+
+    document.getElementById('lat_min').value = bounds.getSouth().toFixed(4);
+    document.getElementById('lat_max').value = bounds.getNorth().toFixed(4);
+    document.getElementById('lon_min').value = bounds.getWest().toFixed(4);
+    document.getElementById('lon_max').value = bounds.getEast().toFixed(4);
 }
 
 async function uploadShape() {
     var file = document.getElementById('userShapeInput').files[0];
     if (!file) return;
+
     limparTudoMenos('upload');
     startLoading();
     document.getElementById('shapeStatus').innerText = 'Enviando...';
+
     var fd = new FormData();
     fd.append('file', file);
+
     try {
-        var r = await fetch('/upload_user_shape', { method: 'POST', body: fd });
-        var d = await r.json();
-        if (d.error) throw new Error(d.error);
-        document.getElementById('uploadedShapeName').value = d.filename;
-        document.getElementById('shapeStatus').innerText = 'OK: ' + d.filename;
-        uploadedLayer = L.geoJSON(JSON.parse(d.geojson), {
+        var response = await fetch('/upload_user_shape', { method: 'POST', body: fd });
+        var data = await response.json();
+        if (data.error) throw new Error(data.error);
+
+        document.getElementById('uploadedShapeName').value = data.filename;
+        document.getElementById('shapeStatus').innerText = 'Arquivo carregado: ' + data.filename;
+        uploadedLayer = L.geoJSON(JSON.parse(data.geojson), {
             interactive: false,
-            style: { color: 'orange', dashArray: '5,5' }
+            style: { color: '#d36b00', dashArray: '5,5', weight: 2 }
         }).addTo(map);
         map.fitBounds(uploadedLayer.getBounds());
         updateCoords(uploadedLayer.getBounds());
-    } catch (e) {
-        // CORREÇÃO: substituído alert() por toast
-        showToast('❌ Erro ao enviar arquivo: ' + e.message, 'error', 6000);
-        document.getElementById('shapeStatus').innerText = 'Erro';
+    } catch (error) {
+        showToast('Erro ao enviar arquivo: ' + error.message, 'error', 6000);
+        document.getElementById('shapeStatus').innerText = 'Erro no upload';
     } finally {
         stopLoading();
     }
@@ -317,41 +310,52 @@ async function uploadShape() {
 
 function aplicarFiltroEstado() {
     var uf = document.getElementById('brazil_states').value;
-    if (stateLayer) { map.removeLayer(stateLayer); stateLayer = null; }
+
+    if (stateLayer) {
+        map.removeLayer(stateLayer);
+        stateLayer = null;
+    }
+
     limparTudoMenos('state');
-    if (!uf) { updateCoords(null); return; }
+    if (!uf) {
+        updateCoords(null);
+        return;
+    }
+
     startLoading();
 
-    fetch('/limites/estado/' + uf)
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-            if (d.error) {
-                showToast('Erro: ' + d.error, 'error');
+    fetch('/limites/estado/' + encodeURIComponent(uf))
+        .then(function (response) { return response.json(); })
+        .then(function (data) {
+            if (data.error) {
+                showToast('Erro: ' + data.error, 'error');
                 return;
             }
-            stateLayer = L.geoJSON(d.geojson, {
-                interactive: false,
-                style: { color: '#0079c1', weight: 2, fillOpacity: 0.1 }
-            }).addTo(map);
-            var b = d.bbox;
+
+            if (data.geojson) {
+                stateLayer = L.geoJSON(data.geojson, {
+                    interactive: false,
+                    style: { color: '#1677b8', weight: 2, fillOpacity: 0.1 }
+                }).addTo(map);
+            }
+
+            var b = data.bbox;
             var bounds = L.latLngBounds([b[1], b[0]], [b[3], b[2]]);
             map.fitBounds(bounds);
             updateCoords(bounds);
         })
-        .catch(function (e) { showToast('Erro ao carregar estado.', 'error'); console.error(e); })
+        .catch(function () {
+            showToast('Erro ao carregar estado.', 'error');
+        })
         .finally(stopLoading);
 }
-
-// =========================================================
-// 8. CAMADAS DO PAINEL
-// =========================================================
 
 function toggleCamada(checkbox, nomeArquivo, nomeExibicao, cor, tipo) {
     if (!checkbox.checked) {
         if (activeLayers[nomeArquivo]) map.removeLayer(activeLayers[nomeArquivo]);
         return;
     }
-    // MELHORIA: re-usa camada em cache sem novo fetch
+
     if (activeLayers[nomeArquivo]) {
         map.addLayer(activeLayers[nomeArquivo]);
         return;
@@ -360,164 +364,191 @@ function toggleCamada(checkbox, nomeArquivo, nomeExibicao, cor, tipo) {
     startLoading();
     checkbox.disabled = true;
 
-    fetch('/camadas/' + nomeArquivo)
-        .then(function (r) { return r.json(); })
+    fetch('/camadas/' + encodeURIComponent(nomeArquivo))
+        .then(function (response) {
+            if (!response.ok) throw new Error('Camada indisponível.');
+            return response.json();
+        })
         .then(function (data) {
             var layer = L.geoJSON(data, {
                 customTitle: nomeExibicao,
-                interactive: true,   // necessário para o click handler funcionar
+                interactive: true,
                 style: function () {
-                    return { color: cor, weight: 3, opacity: 0.8, fillOpacity: 0.1 };
+                    return { color: cor, weight: 3, opacity: 0.82, fillOpacity: 0.1 };
                 },
-                pointToLayer: function (f, latlng) {
+                pointToLayer: function (feature, latlng) {
                     return L.circleMarker(latlng, {
-                        radius: 5, fillColor: cor, color: '#fff',
-                        weight: 1, opacity: 1, fillOpacity: 0.9
+                        radius: tipo === 'ponto' ? 5 : 4,
+                        fillColor: cor,
+                        color: '#fff',
+                        weight: 1,
+                        opacity: 1,
+                        fillOpacity: 0.9
                     });
                 }
             });
+
             activeLayers[nomeArquivo] = layer;
             map.addLayer(layer);
         })
-        .catch(function () { showToast('Erro ao carregar camada.', 'error'); checkbox.checked = false; })
-        .finally(function () { checkbox.disabled = false; stopLoading(); });
+        .catch(function () {
+            showToast('Erro ao carregar camada.', 'error');
+            checkbox.checked = false;
+        })
+        .finally(function () {
+            checkbox.disabled = false;
+            stopLoading();
+        });
 }
 
-// =========================================================
-// 9. BUSCA DE DADOS
-// =========================================================
-
 function buscarDados() {
-    var p = document.getElementById('produto').value;
-    if (!p) { showToast('Selecione um produto antes de consultar.', 'warning'); return; }
+    var product = document.getElementById('produto').value;
+    var startDate = document.getElementById('start_date').value;
+    var endDate = document.getElementById('end_date').value;
 
-    var sDate = document.getElementById('start_date').value;
-    var eDate = document.getElementById('end_date').value;
-    if (!sDate || !eDate) {
-        showToast('Preencha a Data Inicial e a Data Final.', 'warning');
+    if (!product) {
+        showToast('Selecione um produto antes de consultar.', 'warning');
         return;
     }
-    if (new Date(sDate) > new Date(eDate)) {
+
+    if (!startDate || !endDate) {
+        showToast('Preencha a data inicial e a data final.', 'warning');
+        return;
+    }
+
+    if (new Date(startDate) > new Date(endDate)) {
         showToast('As datas estão invertidas. Corrija o período.', 'warning');
         return;
     }
 
     switchTab('resultados');
+
     var list = document.getElementById('results-list');
+    var loader = document.getElementById('progress-container');
+    var bar = document.getElementById('progress-fill');
+    var btnDown = document.getElementById('btn-download-selected');
+
     list.innerHTML = '';
     list.classList.add('hidden');
     document.getElementById('results-meta').classList.add('hidden');
-
-    var btnDown = document.getElementById('btn-download-selected');
     if (btnDown) btnDown.classList.add('hidden');
-
     document.getElementById('nav-resultados').classList.remove('disabled');
 
-    // Inicia barra de progresso animada
-    var loader = document.getElementById('progress-container');
-    var bar    = document.getElementById('progress-fill');
     loader.classList.remove('hidden');
     bar.style.width = '0%';
     bar.classList.remove('progress-filling');
-    void bar.offsetWidth; // força reflow para reiniciar animação
+    void bar.offsetWidth;
     bar.classList.add('progress-filling');
 
     var formData = new FormData(document.getElementById('searchForm'));
-    var reqData  = Object.fromEntries(formData);
-    reqData['shape_filename'] = document.getElementById('uploadedShapeName').value;
-    reqData['state_uf']       = document.getElementById('brazil_states').value;
+    var reqData = Object.fromEntries(formData);
+    reqData.shape_filename = document.getElementById('uploadedShapeName').value;
+    reqData.state_uf = document.getElementById('brazil_states').value;
 
     fetch('/buscar_dados', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(reqData)
     })
-    .then(function (r) {
-        if (!r.ok) throw new Error('Falha do Servidor (' + r.status + '). A NASA pode estar demorando a responder.');
-        return r.json();
+    .then(function (response) {
+        if (!response.ok) throw new Error('Falha do servidor (' + response.status + '). A NASA pode estar demorando a responder.');
+        return response.json();
     })
-    .then(function (d) {
+    .then(function (data) {
         bar.classList.remove('progress-filling');
         bar.style.width = '100%';
         loader.classList.add('hidden');
         list.classList.remove('hidden');
 
-        if (d.status !== 'success' || !d.results || d.results.length === 0) {
-            list.innerHTML = "<p style='text-align:center; padding:20px; color:#00509e;'>Nenhum resultado encontrado.</p>";
+        if (data.status !== 'success' || !data.results || data.results.length === 0) {
+            list.innerHTML = '<p class="state-message">Nenhum resultado encontrado.</p>';
             return;
         }
 
-        var totalBytes = 0;
-        d.results.forEach(function (f) {
-            if (f.size && f.size !== 'N/A') totalBytes += parseFloat(f.size);
-        });
-
-        document.getElementById('total-count').innerText = d.results.length;
-        document.getElementById('total-size').innerText  = totalBytes.toFixed(2) + ' MB';
-        document.getElementById('results-meta').classList.remove('hidden');
-
-        var shapeName = document.getElementById('uploadedShapeName').value;
-        var stateUF   = document.getElementById('brazil_states').value;
-        var latMinVal = document.getElementById('lat_min').value;
-        var willCrop  = shapeName || (stateUF && stateUF !== 'BR') || latMinVal !== '';
-
-        if (btnDown) {
-            btnDown.classList.remove('hidden');
-            btnDown.disabled = true;
-            if (willCrop) {
-                btnDown.innerHTML = '<span class="material-symbols-outlined">content_cut</span> Recortar e Baixar Selecionados';
-                btnDown.style.backgroundColor = '#e66a00';
-            } else {
-                btnDown.innerHTML = '<span class="material-symbols-outlined">download</span> Baixar Originais Selecionados';
-                btnDown.style.backgroundColor = '#00509e';
-            }
-        }
-
-        var selectAll = document.getElementById('select-all');
-        if (selectAll) selectAll.checked = false;
-
-        d.results.forEach(function (f, index) {
-            var item = document.createElement('div');
-            item.className = 'result-item';
-            item.innerHTML =
-                '<div class="result-info">'
-                + '<input type="checkbox" value="' + escHtml(f.download_link) + '" id="cb-' + index + '" onclick="verificarSelecao()">'
-                + '<div class="result-text">'
-                + '<div class="result-filename" title="' + escHtml(f.filename) + '">' + escHtml(f.filename) + '</div>'
-                + '<div class="result-size">' + escHtml(String(f.size)) + ' MB'
-                + '<span id="status-' + index + '" style="margin-left:10px; font-weight:bold;"></span>'
-                + '</div></div></div>';
-            list.appendChild(item);
-        });
-        verificarSelecao();
+        renderResults(data.results);
     })
-    .catch(function (e) {
-        console.error(e);
+    .catch(function (error) {
         loader.classList.add('hidden');
         list.classList.remove('hidden');
-        list.innerHTML =
-            '<div style="padding:15px; text-align:center; color:#721c24; background:#f8d7da; border:1px solid #f5c6cb; border-radius:5px; margin:10px;">'
-            + '<span class="material-symbols-outlined" style="font-size:30px; display:block; margin-bottom:5px;">error</span>'
-            + '<b>Erro na busca!</b><br><span style="font-size:0.85rem;">' + escHtml(e.message) + '</span></div>';
+        list.innerHTML = '<div class="error-card">' + icon('circle-alert') + '<b>Erro na busca</b><br><span>' + escHtml(error.message) + '</span></div>';
+        renderIcons();
     });
 }
 
-// =========================================================
-// 10. SELEÇÃO E DOWNLOAD
-// =========================================================
+function renderResults(results) {
+    var list = document.getElementById('results-list');
+    var btnDown = document.getElementById('btn-download-selected');
+    var totalBytes = 0;
+
+    results.forEach(function (file) {
+        if (file.size && file.size !== 'N/A') totalBytes += parseFloat(file.size) || 0;
+    });
+
+    document.getElementById('total-count').innerText = results.length;
+    document.getElementById('total-size').innerText = totalBytes.toFixed(2) + ' MB';
+    document.getElementById('results-meta').classList.remove('hidden');
+
+    var shapeName = document.getElementById('uploadedShapeName').value;
+    var stateUF = document.getElementById('brazil_states').value;
+    var latMinVal = document.getElementById('lat_min').value;
+    var willCrop = shapeName || (stateUF && stateUF !== 'BR') || latMinVal !== '';
+
+    btnDown.classList.remove('hidden');
+    btnDown.disabled = true;
+    btnDown.style.backgroundColor = willCrop ? '#d36b00' : '#1677b8';
+    setButton(btnDown, willCrop ? 'scissors' : 'download', willCrop ? 'Recortar e Baixar Selecionados' : 'Baixar Originais Selecionados');
+
+    var selectAll = document.getElementById('select-all');
+    if (selectAll) selectAll.checked = false;
+
+    results.forEach(function (file, index) {
+        var item = document.createElement('div');
+        item.className = 'result-item';
+
+        var info = document.createElement('div');
+        info.className = 'result-info';
+
+        var checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = file.download_link;
+        checkbox.id = 'cb-' + index;
+        checkbox.addEventListener('change', verificarSelecao);
+
+        var text = document.createElement('div');
+        text.className = 'result-text';
+
+        var filename = document.createElement('div');
+        filename.className = 'result-filename';
+        filename.title = file.filename;
+        filename.textContent = file.filename;
+
+        var size = document.createElement('div');
+        size.className = 'result-size';
+        size.innerHTML = escHtml(String(file.size)) + ' MB <span id="status-' + index + '"></span>';
+
+        text.appendChild(filename);
+        text.appendChild(size);
+        info.appendChild(checkbox);
+        info.appendChild(text);
+        item.appendChild(info);
+        list.appendChild(item);
+    });
+
+    verificarSelecao();
+}
 
 function verificarSelecao() {
-    var cbs = document.querySelectorAll('.result-item input:checked');
+    var selected = document.querySelectorAll('.result-item input:checked');
     var btn = document.querySelector('.btn-aneel.download');
-    if (btn) btn.disabled = (cbs.length === 0);
+    if (btn) btn.disabled = selected.length === 0;
 }
 
 function toggleSelectAll() {
-    var sa = document.getElementById('select-all');
-    if (!sa) return;
-    var state = sa.checked;
-    document.querySelectorAll('.result-item input[type="checkbox"]').forEach(function (cb) {
-        cb.checked = state;
+    var selectAll = document.getElementById('select-all');
+    if (!selectAll) return;
+
+    document.querySelectorAll('.result-item input[type="checkbox"]').forEach(function (checkbox) {
+        checkbox.checked = selectAll.checked;
     });
     verificarSelecao();
 }
@@ -527,99 +558,88 @@ function baixarSelecionados() {
     if (cbs.length === 0) return;
 
     var shapeName = document.getElementById('uploadedShapeName').value;
-    var stateUF   = document.getElementById('brazil_states').value;
+    var stateUF = document.getElementById('brazil_states').value;
     var latMinVal = document.getElementById('lat_min').value;
-    var willCrop  = shapeName || (stateUF && stateUF !== 'BR') || latMinVal !== '';
-    var btn       = document.querySelector('.btn-aneel.download');
-
-    // Calcula tamanho total
+    var willCrop = shapeName || (stateUF && stateUF !== 'BR') || latMinVal !== '';
+    var btn = document.querySelector('.btn-aneel.download');
     var totalSizeMB = 0;
-    cbs.forEach(function (cb) {
-        var sizeDiv = cb.closest('.result-info').querySelector('.result-size');
-        if (sizeDiv) {
-            var match = (sizeDiv.innerText || sizeDiv.textContent).match(/([\d.]+)\s*MB/);
-            if (match) totalSizeMB += parseFloat(match[1]);
-        }
+
+    cbs.forEach(function (checkbox) {
+        var sizeDiv = checkbox.closest('.result-info').querySelector('.result-size');
+        var match = sizeDiv && (sizeDiv.innerText || sizeDiv.textContent).match(/([\d.]+)\s*MB/);
+        if (match) totalSizeMB += parseFloat(match[1]);
     });
+
     var sizeDisplay = totalSizeMB >= 1024
         ? (totalSizeMB / 1024).toFixed(2) + ' GB'
         : totalSizeMB.toFixed(2) + ' MB';
 
     if (willCrop) {
-        // CORREÇÃO: substituído alert() por toast
-        showToast(
-            cbs.length + ' arquivo(s) selecionado(s) — ' + sizeDisplay
-            + '. Processando recortes e gerando ZIP...',
-            'info', 5000
-        );
-
+        showToast(cbs.length + ' arquivo(s), ' + sizeDisplay + '. Preparando recortes...', 'info', 5000);
         btn.disabled = true;
-        var textoOriginal = btn.innerHTML;
-        btn.innerHTML = '<span class="material-symbols-outlined">hourglass_empty</span> Preparando...';
+        var originalCropText = btn.innerHTML;
+        setButton(btn, 'loader-circle', 'Preparando...');
 
-        var prod = document.getElementById('produto').value;
-        var sub  = 'Dados';
-        if (prod === 'RiverSP') sub = document.querySelector('#sub-river select[name="subproduto"]').value;
-        else if (prod === 'LakeSP') sub = document.querySelector('#sub-lake select[name="subproduto"]').value;
-        else if (prod === 'Raster') sub = document.querySelector('#sub-raster select[name="resolucao"]').value;
-        else if (prod === 'PIXC') sub = 'Nuvem';
-
-        var areaNome = 'AreaLivre';
-        if (shapeName) {
-            areaNome = shapeName.split('.').slice(0, -1).join('.').replace(/[^a-zA-Z0-9_-]/g, '');
-        } else if (stateUF && stateUF !== 'BR') {
-            areaNome = stateUF;
-        }
-
-        var dataHoje    = new Date().toISOString().split('T')[0];
-        var nomeFinalZip = 'SWOT_' + prod + '_' + sub + '_' + areaNome + '_' + dataHoje;
-
-        var tarefas = Array.from(cbs).map(function (c) {
+        var product = document.getElementById('produto').value;
+        var sub = getSelectedSubproduct(product);
+        var areaName = getAreaName(shapeName, stateUF);
+        var today = new Date().toISOString().split('T')[0];
+        var finalZipName = 'SWOT_' + product + '_' + sub + '_' + areaName + '_' + today;
+        var tasks = Array.from(cbs).map(function (checkbox) {
             return {
-                url:      c.value,
-                statusId: c.id.replace('cb-', 'status-'),
-                shape:    shapeName,
-                state:    (stateUF !== 'BR') ? stateUF : '',
-                lon_min:  document.getElementById('lon_min').value,
-                lat_min:  document.getElementById('lat_min').value,
-                lon_max:  document.getElementById('lon_max').value,
-                lat_max:  document.getElementById('lat_max').value
+                url: checkbox.value,
+                statusId: checkbox.id.replace('cb-', 'status-'),
+                shape: shapeName,
+                state: stateUF !== 'BR' ? stateUF : '',
+                lon_min: document.getElementById('lon_min').value,
+                lat_min: document.getElementById('lat_min').value,
+                lon_max: document.getElementById('lon_max').value,
+                lat_max: document.getElementById('lat_max').value
             };
         });
 
-        processarFilaDownloads(tarefas, btn, textoOriginal, nomeFinalZip);
+        processarFilaDownloads(tasks, btn, originalCropText, finalZipName);
         return;
     }
 
-    // Download de arquivos originais (sem recorte)
-    showToast(cbs.length + ' arquivo(s) — ' + sizeDisplay + '. Iniciando download...', 'info', 4000);
+    showToast(cbs.length + ' arquivo(s), ' + sizeDisplay + '. Iniciando download...', 'info', 4000);
     btn.disabled = true;
-    var textoOriginal = btn.innerHTML;
-    btn.innerHTML = '<span class="material-symbols-outlined">hourglass_empty</span> Baixando...';
-
-    var arquivos = Array.from(cbs).map(function (c) { return c.value; });
+    var originalText = btn.innerHTML;
+    setButton(btn, 'loader-circle', 'Baixando...');
 
     fetch('/baixar_selecionados', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ arquivos: arquivos })
+        body: JSON.stringify({ arquivos: Array.from(cbs).map(function (checkbox) { return checkbox.value; }) })
     })
-    .then(function (r) { return r.json(); })
-    .then(function (d) {
-        showToast(d.message, d.status === 'success' ? 'success' : 'error', 6000);
+    .then(function (response) { return response.json(); })
+    .then(function (data) {
+        showToast(data.message, data.status === 'success' ? 'success' : 'error', 6000);
     })
-    .catch(function () { showToast('Erro no download. Verifique o servidor.', 'error'); })
-    .finally(function () { btn.disabled = false; btn.innerHTML = textoOriginal; });
+    .catch(function () {
+        showToast('Erro no download. Verifique o servidor.', 'error');
+    })
+    .finally(function () {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+        renderIcons();
+    });
 }
 
-// =========================================================
-// 11. DOWNLOAD COM RECORTE — FILA PARALELA
-// =========================================================
+function getSelectedSubproduct(product) {
+    if (product === 'RiverSP') return document.querySelector('#sub-river select[name="subproduto"]').value;
+    if (product === 'LakeSP') return document.querySelector('#sub-lake select[name="subproduto"]').value;
+    if (product === 'Raster') return document.querySelector('#sub-raster select[name="resolucao"]').value;
+    if (product === 'PIXC') return 'Nuvem';
+    return 'Dados';
+}
 
-/**
- * MELHORIA: processa downloads em paralelo com concorrência limitada
- * (padrão: 3 simultâneos) em vez de sequencial.
- */
+function getAreaName(shapeName, stateUF) {
+    if (shapeName) return shapeName.split('.').slice(0, -1).join('.').replace(/[^a-zA-Z0-9_-]/g, '') || 'Area';
+    if (stateUF && stateUF !== 'BR') return stateUF;
+    return 'AreaLivre';
+}
+
 async function processarFilaDownloads(tarefas, btn, textoOriginal, nomeFinalZip) {
     var fileHandle = null;
 
@@ -629,74 +649,66 @@ async function processarFilaDownloads(tarefas, btn, textoOriginal, nomeFinalZip)
                 suggestedName: nomeFinalZip + '.zip',
                 types: [{ description: 'Arquivo ZIP', accept: { 'application/zip': ['.zip'] } }]
             });
-        } catch (saveErr) {
-            if (saveErr.name !== 'AbortError') console.error(saveErr);
+        } catch (error) {
             btn.disabled = false;
             btn.innerHTML = textoOriginal;
+            renderIcons();
             return;
         }
     } else {
-        showToast('Navegador sem suporte a escolha de pasta. O arquivo irá para "Downloads".', 'warning', 5000);
+        showToast('O navegador salvará o arquivo na pasta Downloads.', 'warning', 5000);
     }
 
-    btn.innerHTML = '<span class="material-symbols-outlined">hourglass_empty</span> Processando (0/' + tarefas.length + ')...';
+    setButton(btn, 'loader-circle', 'Processando (0/' + tarefas.length + ')...');
 
-    var zip      = new JSZip();
-    var contagens = { salvos: 0, vazios: 0, erros: 0 };
-    var relatorio = '========================================\n'
-                  + '   RELATÓRIO DE DOWNLOAD - SWOT NASA    \n'
-                  + '========================================\n'
-                  + 'Data: ' + new Date().toLocaleString() + '\n'
-                  + 'Total de arquivos: ' + tarefas.length + '\n\n';
-
-    // Resultados na mesma ordem das tarefas
-    var resultados = new Array(tarefas.length);
-
-    // MELHORIA: pool de workers com concorrência = 3
-    var CONCORRENCIA = 3;
-    var proxIdx = 0;
-    var concluidos = 0;
+    var zip = new JSZip();
+    var counts = { salvos: 0, vazios: 0, erros: 0 };
+    var report = '========================================\n'
+        + 'RELATÓRIO DE DOWNLOAD - SWOT NASA\n'
+        + '========================================\n'
+        + 'Data: ' + new Date().toLocaleString() + '\n'
+        + 'Total de arquivos: ' + tarefas.length + '\n\n';
+    var results = new Array(tarefas.length);
+    var concurrency = 3;
+    var nextIndex = 0;
+    var finished = 0;
 
     async function worker() {
-        while (proxIdx < tarefas.length) {
-            var i = proxIdx++;
-            var t = tarefas[i];
-            resultados[i] = await baixarRecortado(
-                t.url, t.statusId, t.shape, t.state,
-                t.lon_min, t.lat_min, t.lon_max, t.lat_max
-            );
-            concluidos++;
-            btn.innerHTML = '<span class="material-symbols-outlined">hourglass_empty</span> Processando ('
-                          + concluidos + '/' + tarefas.length + ')...';
+        while (nextIndex < tarefas.length) {
+            var i = nextIndex++;
+            var task = tarefas[i];
+            results[i] = await baixarRecortado(task.url, task.statusId, task.shape, task.state, task.lon_min, task.lat_min, task.lon_max, task.lat_max);
+            finished++;
+            setButton(btn, 'loader-circle', 'Processando (' + finished + '/' + tarefas.length + ')...');
         }
     }
 
     var workers = [];
-    for (var w = 0; w < Math.min(CONCORRENCIA, tarefas.length); w++) workers.push(worker());
+    for (var w = 0; w < Math.min(concurrency, tarefas.length); w++) workers.push(worker());
     await Promise.all(workers);
 
-    // Monta ZIP e relatório
-    resultados.forEach(function (resultado, i) {
-        var nomeArquivo = tarefas[i].url.split('/').pop().split('?')[0];
-        relatorio += '> ' + nomeArquivo + '\n  Status: ' + resultado.msg + '\n\n';
-        if (resultado.tipo === 'salvo') {
-            contagens.salvos++;
-            if (resultado.blob && resultado.nomeFinal) zip.file(resultado.nomeFinal, resultado.blob);
-        } else if (resultado.tipo === 'vazio') {
-            contagens.vazios++;
+    results.forEach(function (result, i) {
+        var fileName = tarefas[i].url.split('/').pop().split('?')[0];
+        report += '> ' + fileName + '\n  Status: ' + result.msg + '\n\n';
+
+        if (result.tipo === 'salvo') {
+            counts.salvos++;
+            if (result.blob && result.nomeFinal) zip.file(result.nomeFinal, result.blob);
+        } else if (result.tipo === 'vazio') {
+            counts.vazios++;
         } else {
-            contagens.erros++;
+            counts.erros++;
         }
     });
 
-    relatorio += '========================================\n'
-              + 'RESUMO:\n'
-              + '- Baixados: ' + contagens.salvos + '\n'
-              + '- Sem sobreposição: ' + contagens.vazios + '\n'
-              + '- Falhas: ' + contagens.erros + '\n';
-    zip.file('Relatorio_SWOT.txt', relatorio);
+    report += '========================================\n'
+        + 'RESUMO:\n'
+        + '- Baixados: ' + counts.salvos + '\n'
+        + '- Sem sobreposição: ' + counts.vazios + '\n'
+        + '- Falhas: ' + counts.erros + '\n';
+    zip.file('Relatorio_SWOT.txt', report);
 
-    btn.innerHTML = '<span class="material-symbols-outlined">inventory_2</span> Salvando ZIP...';
+    setButton(btn, 'archive', 'Salvando ZIP...');
 
     try {
         var content = await zip.generateAsync({ type: 'blob' });
@@ -704,40 +716,41 @@ async function processarFilaDownloads(tarefas, btn, textoOriginal, nomeFinalZip)
             var writable = await fileHandle.createWritable();
             await writable.write(content);
             await writable.close();
-            showToast('✅ ZIP salvo com sucesso! Baixados: ' + contagens.salvos + ', Sem dados: ' + contagens.vazios, 'success', 7000);
+            showToast('ZIP salvo com sucesso. Baixados: ' + counts.salvos + ', sem dados: ' + counts.vazios + '.', 'success', 7000);
         } else {
             baixarBlob(content, nomeFinalZip + '.zip');
         }
-    } catch (e) {
+    } catch (error) {
         showToast('Erro ao gravar o arquivo ZIP.', 'error');
-        console.error(e);
     }
 
     btn.disabled = false;
     btn.innerHTML = textoOriginal;
+    renderIcons();
 }
 
-/**
- * MELHORIA: timeout de 3 minutos por arquivo (evita travar indefinidamente)
- */
-async function baixarRecortado(url, statusId, shape, stateUF, lon_min, lat_min, lon_max, lat_max) {
+async function baixarRecortado(url, statusId, shape, stateUF, lonMin, latMin, lonMax, latMax) {
     var statusSpan = document.getElementById(statusId);
-    if (statusSpan) { statusSpan.innerText = '⏳ Recortando...'; statusSpan.style.color = '#e66a00'; }
+    if (statusSpan) {
+        statusSpan.innerText = 'Recortando...';
+        statusSpan.style.color = '#d36b00';
+    }
 
-    // AbortController para timeout
     var controller = new AbortController();
-    var timeout    = setTimeout(function () { controller.abort(); }, 3 * 60 * 1000); // 3 min
+    var timeout = setTimeout(function () { controller.abort(); }, 3 * 60 * 1000);
 
     try {
         var reqBody = { granule_url: url };
-        if (shape)    reqBody.shape_filename = shape;
-        if (stateUF)  reqBody.state_uf = stateUF;
-        if (lon_min !== '') {
-            reqBody.lon_min = lon_min; reqBody.lat_min = lat_min;
-            reqBody.lon_max = lon_max; reqBody.lat_max = lat_max;
+        if (shape) reqBody.shape_filename = shape;
+        if (stateUF) reqBody.state_uf = stateUF;
+        if (lonMin !== '') {
+            reqBody.lon_min = lonMin;
+            reqBody.lat_min = latMin;
+            reqBody.lon_max = lonMax;
+            reqBody.lat_max = latMax;
         }
 
-        var r = await fetch('/download_cropped', {
+        var response = await fetch('/download_cropped', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(reqBody),
@@ -745,165 +758,165 @@ async function baixarRecortado(url, statusId, shape, stateUF, lon_min, lat_min, 
         });
         clearTimeout(timeout);
 
-        if (r.ok) {
-            var contentType = r.headers.get('content-type') || '';
+        if (response.ok) {
+            var contentType = response.headers.get('content-type') || '';
             if (contentType.includes('application/json')) {
-                var data = await r.json();
+                var data = await response.json();
                 if (data.status === 'no_data') {
                     if (statusSpan) {
-                        statusSpan.innerText = '⚠️ Sem sobreposição';
-                        statusSpan.style.color = '#856404';
+                        statusSpan.innerText = 'Sem sobreposição';
+                        statusSpan.style.color = '#7a5200';
                         statusSpan.title = 'Sem sobreposição na área de interesse';
                     }
                     return { tipo: 'vazio', msg: 'Sem sobreposição na área de interesse.' };
                 }
             }
 
-            var blob = await r.blob();
-            var nomeOriginal    = url.split('/').pop().split('?')[0];
-            var nomeSemExtensao = nomeOriginal.substring(0, nomeOriginal.lastIndexOf('.')) || nomeOriginal;
+            var blob = await response.blob();
+            var originalName = url.split('/').pop().split('?')[0];
+            var nameWithoutExt = originalName.substring(0, originalName.lastIndexOf('.')) || originalName;
             var ext = '.geojson';
-            var u   = url.toLowerCase();
-            if (u.includes('.zip')) ext = '.zip';
-            else if (u.includes('.nc')) ext = '.nc';
-            else if (u.includes('.gpkg')) ext = '.gpkg';
+            var lowerUrl = url.toLowerCase();
+            if (lowerUrl.includes('.zip')) ext = '.zip';
+            if (lowerUrl.includes('.nc')) ext = '.nc';
+            if (lowerUrl.includes('.gpkg')) ext = '.gpkg';
 
-            if (statusSpan) { statusSpan.innerText = '✅ Salvo'; statusSpan.style.color = 'green'; }
-            return { tipo: 'salvo', msg: 'Recorte efetuado com sucesso.', blob: blob, nomeFinal: 'recorte_' + nomeSemExtensao + ext };
-
-        } else {
-            var err    = await r.json().catch(function () { return {}; });
-            var erroMsg = err.error || 'Erro desconhecido';
-            if (statusSpan) { statusSpan.innerText = '❌ Falha'; statusSpan.style.color = 'red'; statusSpan.title = erroMsg; }
-            return { tipo: 'erro', msg: 'Falha: ' + erroMsg };
+            if (statusSpan) {
+                statusSpan.innerText = 'Salvo';
+                statusSpan.style.color = '#16834a';
+            }
+            return { tipo: 'salvo', msg: 'Recorte efetuado com sucesso.', blob: blob, nomeFinal: 'recorte_' + nameWithoutExt + ext };
         }
-    } catch (e) {
+
+        var err = await response.json().catch(function () { return {}; });
+        var errorMessage = err.error || 'Erro desconhecido';
+        if (statusSpan) {
+            statusSpan.innerText = 'Falha';
+            statusSpan.style.color = '#c92a3a';
+            statusSpan.title = errorMessage;
+        }
+        return { tipo: 'erro', msg: 'Falha: ' + errorMessage };
+    } catch (error) {
         clearTimeout(timeout);
-        var msg = e.name === 'AbortError'
+        var msg = error.name === 'AbortError'
             ? 'Timeout: servidor demorou mais de 3 minutos.'
             : 'Falha de comunicação com o servidor.';
-        if (statusSpan) { statusSpan.innerText = '❌ ' + (e.name === 'AbortError' ? 'Timeout' : 'Sem Conexão'); statusSpan.style.color = 'red'; }
+        if (statusSpan) {
+            statusSpan.innerText = error.name === 'AbortError' ? 'Timeout' : 'Sem conexão';
+            statusSpan.style.color = '#c92a3a';
+        }
         return { tipo: 'erro', msg: msg };
     }
 }
 
-// =========================================================
-// 12. UTILITÁRIOS
-// =========================================================
-
-/** CORREÇÃO: revoga a URL do blob após usar (evita memory leak) */
 function baixarBlob(blob, nome) {
     var url = URL.createObjectURL(blob);
-    var a   = document.createElement('a');
-    a.href     = url;
-    a.download = nome;
-    a.click();
+    var anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = nome;
+    anchor.click();
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
 }
 
-/** Escapa HTML para evitar XSS nos popups e na lista de resultados */
 function escHtml(str) {
     return String(str)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
-
-// =========================================================
-// 13. POPUP DE ATRIBUTOS DO MAPA
-// =========================================================
 
 map.on('click', function (e) {
     if (Object.keys(activeLayers).length === 0) return;
 
-    var clickPt     = turf.point([e.latlng.lng, e.latlng.lat]);
+    var clickPoint = turf.point([e.latlng.lng, e.latlng.lat]);
     var foundFeatures = [];
     var toleranceKm = 2000 / Math.pow(2, map.getZoom());
 
-    for (var layerKey in activeLayers) {
+    Object.keys(activeLayers).forEach(function (layerKey) {
         var layerGroup = activeLayers[layerKey];
         layerGroup.eachLayer(function (layer) {
             if (!layer.feature || !layer.feature.geometry) return;
-            var geom    = layer.feature.geometry;
-            var isInside = false;
-
-            try {
-                var type = geom.type;
-                if (type === 'Point') {
-                    var c = geom.coordinates;
-                    if (turf.distance(clickPt, turf.point([c[0], c[1]]), { units: 'kilometers' }) <= toleranceKm)
-                        isInside = true;
-
-                } else if (type === 'MultiPoint') {
-                    geom.coordinates.forEach(function (coord) {
-                        if (turf.distance(clickPt, turf.point([coord[0], coord[1]]), { units: 'kilometers' }) <= toleranceKm)
-                            isInside = true;
-                    });
-
-                } else if (type === 'LineString' || type === 'MultiLineString') {
-                    try {
-                        if (turf.pointToLineDistance(clickPt, layer.feature, { units: 'kilometers' }) <= toleranceKm)
-                            isInside = true;
-                    } catch (errLine) {
-                        var coords = type === 'LineString' ? [geom.coordinates] : geom.coordinates;
-                        outer: for (var li = 0; li < coords.length; li++) {
-                            for (var pi = 0; pi < coords[li].length; pi++) {
-                                if (turf.distance(clickPt, turf.point([coords[li][pi][0], coords[li][pi][1]]), { units: 'kilometers' }) <= toleranceKm) {
-                                    isInside = true; break outer;
-                                }
-                            }
-                        }
-                    }
-
-                } else if (type === 'Polygon' || type === 'MultiPolygon') {
-                    isInside = turf.booleanPointInPolygon(clickPt, layer.feature);
-                    if (!isInside) {
-                        try {
-                            var lines = turf.polygonToLine(layer.feature);
-                            var lineFeats = lines.type === 'FeatureCollection' ? lines.features : [lines];
-                            lineFeats.forEach(function (l) {
-                                if (turf.pointToLineDistance(clickPt, l, { units: 'kilometers' }) <= toleranceKm)
-                                    isInside = true;
-                            });
-                        } catch (err2) { /* ignora */ }
-                    }
-                }
-            } catch (err) {
-                console.warn('Geometria ignorada no click:', err);
-            }
-
-            if (isInside) {
+            if (featureMatchesClick(layer.feature, clickPoint, toleranceKm)) {
                 foundFeatures.push({
                     title: layerGroup.options.customTitle || layerKey,
-                    props: layer.feature.properties
+                    props: layer.feature.properties || {}
                 });
             }
         });
-    }
+    });
 
     if (foundFeatures.length > 0) showMultiPopup(foundFeatures, e.latlng);
 });
 
+function featureMatchesClick(feature, clickPoint, toleranceKm) {
+    var geom = feature.geometry;
+    var type = geom.type;
+
+    try {
+        if (type === 'Point') return pointNear(clickPoint, geom.coordinates, toleranceKm);
+        if (type === 'MultiPoint') {
+            return geom.coordinates.some(function (coord) {
+                return pointNear(clickPoint, coord, toleranceKm);
+            });
+        }
+        if (type === 'LineString' || type === 'MultiLineString') return lineNear(clickPoint, feature, geom, toleranceKm);
+        if (type === 'Polygon' || type === 'MultiPolygon') return polygonNear(clickPoint, feature, toleranceKm);
+    } catch (error) {
+        return false;
+    }
+
+    return false;
+}
+
+function pointNear(clickPoint, coord, toleranceKm) {
+    return turf.distance(clickPoint, turf.point([coord[0], coord[1]]), { units: 'kilometers' }) <= toleranceKm;
+}
+
+function lineNear(clickPoint, feature, geom, toleranceKm) {
+    try {
+        return turf.pointToLineDistance(clickPoint, feature, { units: 'kilometers' }) <= toleranceKm;
+    } catch (error) {
+        var coords = geom.type === 'LineString' ? [geom.coordinates] : geom.coordinates;
+        return coords.some(function (line) {
+            return line.some(function (coord) {
+                return pointNear(clickPoint, coord, toleranceKm);
+            });
+        });
+    }
+}
+
+function polygonNear(clickPoint, feature, toleranceKm) {
+    if (turf.booleanPointInPolygon(clickPoint, feature)) return true;
+
+    try {
+        var lines = turf.polygonToLine(feature);
+        var lineFeatures = lines.type === 'FeatureCollection' ? lines.features : [lines];
+        return lineFeatures.some(function (line) {
+            return turf.pointToLineDistance(clickPoint, line, { units: 'kilometers' }) <= toleranceKm;
+        });
+    } catch (error) {
+        return false;
+    }
+}
+
 function showMultiPopup(features, latlng) {
-    var html = '<div style="min-width:260px; max-width:320px;">';
+    var html = '<div class="popup-wrapper">';
 
     if (features.length === 1) {
         html += buildFeatureTable(features[0].title, features[0].props);
     } else {
-        html += '<div style="display:flex; overflow-x:auto; border-bottom:2px solid #00509e; margin-bottom:10px; padding-bottom:5px; gap:6px;">';
-        features.forEach(function (f, idx) {
-            var bg    = idx === 0 ? '#00509e' : '#f1f1f1';
-            var color = idx === 0 ? '#fff' : '#333';
-            html += '<button class="multi-tab-btn" data-idx="' + idx + '" onclick="switchTabPopup(' + idx + ')"'
-                  + ' style="flex-shrink:0; padding:4px 8px; border:1px solid #ddd; border-radius:4px;'
-                  + ' background:' + bg + '; color:' + color + '; font-size:11px; cursor:pointer; font-weight:bold;">'
-                  + escHtml(f.title) + '</button>';
+        html += '<div class="popup-tabs">';
+        features.forEach(function (feature, idx) {
+            html += '<button type="button" class="multi-tab-btn ' + (idx === 0 ? 'active' : '') + '" data-idx="' + idx + '">'
+                + escHtml(feature.title)
+                + '</button>';
         });
         html += '</div><div id="multi-popup-contents">';
-        features.forEach(function (f, idx) {
-            html += '<div class="multi-tab-pane" id="pane-' + idx + '" style="display:' + (idx === 0 ? 'block' : 'none') + ';">';
-            html += buildFeatureTable(f.title, f.props);
+        features.forEach(function (feature, idx) {
+            html += '<div class="multi-tab-pane ' + (idx === 0 ? '' : 'hidden') + '" id="pane-' + idx + '">';
+            html += buildFeatureTable(feature.title, feature.props);
             html += '</div>';
         });
         html += '</div>';
@@ -911,35 +924,87 @@ function showMultiPopup(features, latlng) {
 
     html += '</div>';
     L.popup({ maxHeight: window.innerHeight * 0.5 }).setLatLng(latlng).setContent(html).openOn(map);
+    setTimeout(bindPopupTabs, 0);
 }
 
 function buildFeatureTable(title, props) {
-    // CORREÇÃO: usa escHtml() para sanitizar valores e evitar XSS
-    var html = '<div style="font-weight:bold; color:#00509e; margin-bottom:10px; border-bottom:1px solid #ddd; padding-bottom:5px;">'
-             + escHtml(title) + '</div>';
-    html += '<table style="width:100%; border-collapse:collapse; font-size:11px;">';
-    for (var key in props) {
-        if (!Object.prototype.hasOwnProperty.call(props, key)) continue;
-        var value      = props[key];
-        var valDisplay = (value === null || value === '') ? '-' : escHtml(String(value));
-        html += '<tr>'
-              + '<td style="padding:4px 2px; border-bottom:1px solid #eee; font-weight:600; color:#555; vertical-align:top; width:45%;">'
-              + escHtml(key) + '</td>'
-              + '<td style="padding:4px 2px; border-bottom:1px solid #eee; word-break:break-all;">'
-              + valDisplay + '</td></tr>';
-    }
+    var html = '<div class="feature-title">' + escHtml(title) + '</div>';
+    html += '<table class="feature-table">';
+
+    Object.keys(props).forEach(function (key) {
+        var value = props[key];
+        var displayValue = value === null || value === '' ? '-' : escHtml(String(value));
+        html += '<tr><td class="feature-key">' + escHtml(key) + '</td><td class="feature-value">' + displayValue + '</td></tr>';
+    });
+
     html += '</table>';
     return html;
 }
 
 window.switchTabPopup = function (activeIdx) {
     document.querySelectorAll('.multi-tab-btn').forEach(function (btn) {
-        var isActive = parseInt(btn.getAttribute('data-idx')) === activeIdx;
-        btn.style.background   = isActive ? '#00509e' : '#f1f1f1';
-        btn.style.color        = isActive ? '#fff'    : '#333';
-        btn.style.borderColor  = isActive ? '#00509e' : '#ddd';
+        var isActive = parseInt(btn.getAttribute('data-idx'), 10) === activeIdx;
+        btn.classList.toggle('active', isActive);
     });
+
     document.querySelectorAll('.multi-tab-pane').forEach(function (pane, idx) {
-        pane.style.display = (idx === activeIdx) ? 'block' : 'none';
+        pane.classList.toggle('hidden', idx !== activeIdx);
     });
 };
+
+function bindPopupTabs() {
+    document.querySelectorAll('.multi-tab-btn').forEach(function (button) {
+        button.addEventListener('click', function () {
+            window.switchTabPopup(parseInt(button.getAttribute('data-idx'), 10));
+        });
+    });
+}
+
+function bindEvents() {
+    document.querySelectorAll('[data-tab]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            switchTab(button.getAttribute('data-tab'));
+        });
+    });
+
+    var manualButton = document.querySelector('[data-action="manual"]');
+    if (manualButton) manualButton.addEventListener('click', toggleManual);
+
+    document.getElementById('close-manual').addEventListener('click', toggleManual);
+    document.getElementById('produto').addEventListener('change', toggleSubproducts);
+    document.getElementById('userShapeInput').addEventListener('change', uploadShape);
+    document.getElementById('brazil_states').addEventListener('change', aplicarFiltroEstado);
+    document.getElementById('start_date').addEventListener('change', validarDatas);
+    document.getElementById('end_date').addEventListener('change', validarDatas);
+    document.getElementById('clear-area').addEventListener('click', limparArea);
+    document.getElementById('search-button').addEventListener('click', buscarDados);
+    document.getElementById('btn-download-selected').addEventListener('click', baixarSelecionados);
+    document.getElementById('reset-search').addEventListener('click', resetarConsulta);
+    document.getElementById('select-all').addEventListener('change', toggleSelectAll);
+
+    document.querySelectorAll('input[name="basemap_sel"]').forEach(function (radio) {
+        radio.addEventListener('change', function () {
+            trocarBasemap(radio.value);
+        });
+    });
+
+    document.querySelectorAll('[data-layer]').forEach(function (checkbox) {
+        checkbox.addEventListener('change', function () {
+            toggleCamada(
+                checkbox,
+                checkbox.getAttribute('data-layer'),
+                checkbox.getAttribute('data-title'),
+                checkbox.getAttribute('data-color'),
+                checkbox.getAttribute('data-kind')
+            );
+        });
+    });
+}
+
+bindEvents();
+renderIcons();
+
+window.switchTab = switchTab;
+window.toggleManual = toggleManual;
+window.limparArea = limparArea;
+window.buscarDados = buscarDados;
