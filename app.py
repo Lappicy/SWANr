@@ -8,26 +8,26 @@ import zipfile
 import glob
 import uuid
 import re
-import io
 import warnings
 from collections import OrderedDict
-from flask import Flask, render_template, request, jsonify, Response, send_file
+from flask import Flask, render_template, request, jsonify, Response, send_file, after_this_request
 from werkzeug.utils import secure_filename
 import earthaccess
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import shape, box
+from shapely.geometry import box
 from shapely.ops import transform as shapely_transform
 from dotenv import load_dotenv
 
-warnings.filterwarnings("ignore", message="Dataset has no geotransform.*")
-warnings.filterwarnings("ignore", message=".*NotGeoreferencedWarning.*")
 
 import fiona
 fiona.drvsupport.supported_drivers['KML'] = 'rw'
 fiona.drvsupport.supported_drivers['LIBKML'] = 'rw'
 fiona.drvsupport.supported_drivers['GPX'] = 'rw'
 fiona.drvsupport.supported_drivers['GPKG'] = 'rw'
+
+warnings.filterwarnings("ignore", message="Dataset has no geotransform.*")
+warnings.filterwarnings("ignore", message=".*NotGeoreferencedWarning.*")
 
 NETCDF_AVAILABLE = False
 try:
@@ -49,19 +49,20 @@ os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+
+ALLOWED_UPLOAD_EXTENSIONS = {'.zip', '.gpkg', '.kml', '.kmz', '.json', '.geojson'}
+ALLOWED_LAYER_NAMES = {
+    'limites_BR',
+    'Estacoes_hidrometeorologicas_ANA',
+    'SNIRH_OttobaciaNv1',
+    'SWOT_orbits_BR',
+    'SWOT_tiles_BR',
+}
 
 auth = None
 usuario = os.environ.get("EARTHDATA_USERNAME")
 senha = os.environ.get("EARTHDATA_PASSWORD")
-
-if not usuario or not senha:
-    print(">>> AVISO: Credenciais da NASA ausentes. O download falhará.")
-else:
-    try:
-        auth = earthaccess.login(strategy="environment", persist=True)
-        print(">>> Login na NASA realizado com sucesso!")
-    except Exception as e:
-        print(f">>> Erro no Login Earthdata: {e}")
 
 COLLECTIONS_BASE = {
     "PIXC": "SWOT_L2_HR_PIXC_D",
@@ -71,8 +72,6 @@ COLLECTIONS_BASE = {
 _CACHE_MAX = 10
 CACHE_ESTADOS = OrderedDict()
 _CACHE_COL_UF = {}
-_CACHE_MASK_GEOM = OrderedDict()
-_CACHE_MASK_MAX = 5
 
 
 def _cache_set(cache, key, value, max_size):
@@ -82,20 +81,38 @@ def _cache_set(cache, key, value, max_size):
     if len(cache) > max_size:
         cache.popitem(last=False)
 
-
-def get_json_body():
-    return request.get_json(silent=True) or {}
-
-
-def upload_path(filename):
-    safe_name = secure_filename(filename or "")
-    if not safe_name:
-        return None
-    return os.path.join(app.config['UPLOAD_FOLDER'], safe_name)
-
-
 def remover_z(geom):
     return shapely_transform(lambda x, y, *_: (x, y), geom)
+
+def _is_allowed_upload(filename):
+    return os.path.splitext(filename)[1].lower() in ALLOWED_UPLOAD_EXTENSIONS
+
+def _unique_upload_name(filename):
+    safe_name = secure_filename(filename)
+    stem, ext = os.path.splitext(safe_name)
+    stem = stem or 'upload'
+    return f"{stem[:80]}_{uuid.uuid4().hex[:10]}{ext.lower()}"
+
+def _safe_extract_zip(zip_file, destination):
+    dest_abs = os.path.abspath(destination)
+    for member in zip_file.infolist():
+        member_path = os.path.abspath(os.path.join(dest_abs, member.filename))
+        if not member_path.startswith(dest_abs + os.sep):
+            raise ValueError("Arquivo compactado contem caminho invalido.")
+    zip_file.extractall(dest_abs)
+
+def get_earthdata_auth():
+    global auth
+    if auth:
+        return auth
+    if not usuario or not senha:
+        return None
+    try:
+        auth = earthaccess.login(strategy="environment", persist=True)
+        return auth
+    except Exception as e:
+        print(f">>> Erro no Login Earthdata: {e}")
+        return None
 
 def _detectar_col_uf(caminho_arquivo, uf_alvo):
     if caminho_arquivo in _CACHE_COL_UF:
@@ -140,7 +157,7 @@ def carregar_geodataframe(caminho_arquivo):
         if ext in ['.zip', '.kmz']:
             temp_dir = tempfile.mkdtemp()
             with zipfile.ZipFile(caminho_arquivo, 'r') as z:
-                z.extractall(temp_dir)
+                _safe_extract_zip(z, temp_dir)
 
             for padrao in ["**/*.shp", "**/*.kml", "**/*.gpkg", "**/*.geojson"]:
                 encontrados = glob.glob(os.path.join(temp_dir, padrao), recursive=True)
@@ -201,10 +218,11 @@ def upload_user_shape():
     if filename.lower().endswith('.shp'):
         return jsonify({'error': 'Um arquivo .shp nao funciona sozinho! '
                         'Por favor, compacte todos os arquivos do shapefile em um arquivo .ZIP e faca o upload.'}), 400
+    if not _is_allowed_upload(filename):
+        return jsonify({'error': 'Formato nao permitido. Use .zip, .gpkg, .kml, .kmz, .json ou .geojson.'}), 400
 
-    filepath = upload_path(filename)
-    if not filepath:
-        return jsonify({'error': 'Nome do arquivo invalido.'}), 400
+    filename = _unique_upload_name(filename)
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     file.save(filepath)
 
     temp_dir = None
@@ -224,8 +242,6 @@ def upload_user_shape():
 
         bounds = list(gdf.total_bounds)
         geojson_str = gdf.to_json()
-
-        _cache_set(_CACHE_MASK_GEOM, filename, {"bounds": bounds}, _CACHE_MASK_MAX)
 
         return jsonify({
             'message': 'Sucesso',
@@ -261,7 +277,6 @@ def get_estado_limits(uf_sigla):
         if gdf_estado.crs and gdf_estado.crs.to_string() != "EPSG:4326":
             gdf_estado = gdf_estado.to_crs("EPSG:4326")
 
-        gdf_estado['geometry'] = gdf_estado['geometry'].simplify(0.005)
         bounds = gdf_estado.total_bounds
         geojson_data = json.loads(gdf_estado.to_json())
 
@@ -279,8 +294,11 @@ def get_estado_limits(uf_sigla):
 def get_camada(nome_camada):
     gdf = None
     try:
+        if nome_camada not in ALLOWED_LAYER_NAMES:
+            return jsonify({"error": "Camada nao permitida."}), 404
+
         nome_arquivo = f"{nome_camada}.gpkg"
-        caminho_arquivo = os.path.join('camadas', nome_arquivo)
+        caminho_arquivo = os.path.join(BASE_DIR, 'camadas', nome_arquivo)
         if not os.path.exists(caminho_arquivo):
             return jsonify({"error": "Camada nao encontrada."}), 404
 
@@ -291,9 +309,6 @@ def get_camada(nome_camada):
 
         if gdf.crs and gdf.crs.to_string() != "EPSG:4326":
             gdf = gdf.to_crs("EPSG:4326")
-        if len(gdf) > 3000:
-            gdf['geometry'] = gdf['geometry'].simplify(0.01)
-
         resp = Response(gdf.to_json(), mimetype='application/json')
         return resp
     except Exception as e:
@@ -309,7 +324,7 @@ def buscar_dados():
     gdf_tiles = None
     inter = None
     try:
-        d = get_json_body()
+        d = request.json
         prod = d.get('produto')
         start_date = d.get('start_date')
         end_date = d.get('end_date')
@@ -335,8 +350,8 @@ def buscar_dados():
         tile_val = str(d.get('tile', '')).strip() if str(d.get('tile', '')).strip() else "*"
         cont_val = d.get('continente') if d.get('continente') else "SA"
 
-        mask_name = secure_filename(d.get('shape_filename', '')) or None
-        state_uf = str(d.get('state_uf') or '').upper()
+        mask_name = d.get('shape_filename')
+        state_uf = d.get('state_uf')
 
         bbox_geom = None
         if d.get('lon_min') and str(d.get('lon_min')).strip() != "":
@@ -351,7 +366,7 @@ def buscar_dados():
         if (bbox_geom or mask_name or state_uf) and pass_val == "*" and tile_val == "*":
             try:
                 if mask_name:
-                    mask_path = upload_path(mask_name)
+                    mask_path = os.path.join(app.config['UPLOAD_FOLDER'], mask_name)
                     if os.path.exists(mask_path):
                         gdf_mask, _ = carregar_geodataframe(mask_path)
                 elif state_uf and state_uf != 'BR':
@@ -370,7 +385,6 @@ def buscar_dados():
                     else:
                         gdf_mask = gdf_mask.to_crs("EPSG:4326")
                     gdf_mask = gdf_mask[['geometry']].dissolve()
-                    gdf_mask['geometry'] = gdf_mask['geometry'].simplify(0.0001)
                     gdf_mask['geometry'] = gdf_mask['geometry'].make_valid()
 
                 caminho_tiles = os.path.join(BASE_DIR, 'camadas', 'SWOT_tiles_BR.gpkg')
@@ -522,11 +536,12 @@ def buscar_dados():
 @app.route('/baixar_selecionados', methods=['POST'])
 def baixar_selecionados():
     try:
-        if not auth:
+        current_auth = get_earthdata_auth()
+        if not current_auth:
             return jsonify({"status": "error", "message": "Falha no login da NASA."}), 500
-        data = get_json_body()
+        data = request.json
         links = data.get('arquivos', [])
-        session = auth.get_session()
+        session = current_auth.get_session()
         sucessos = 0
         erros = []
         for link in links:
@@ -555,28 +570,26 @@ def download_cropped():
         for item in os.listdir(app.config['UPLOAD_FOLDER']):
             caminho_item = os.path.join(app.config['UPLOAD_FOLDER'], item)
             idade_segundos = agora - os.path.getmtime(caminho_item)
-
             if (item.startswith('res_') and idade_segundos > 120) or (idade_segundos > 7200):
                 if os.path.isfile(caminho_item):
-                    try:
-                        os.remove(caminho_item)
-                    except Exception:
-                        pass
+                    try: os.remove(caminho_item)
+                    except: pass
                 elif os.path.isdir(caminho_item):
                     shutil.rmtree(caminho_item, ignore_errors=True)
     except Exception:
         pass
 
-    d = get_json_body()
+    d = request.json
     url = d.get('granule_url')
-    mask_name = secure_filename(d.get('shape_filename', '')) or None
-    state_uf = str(d.get('state_uf') or '').upper()
+    mask_name = d.get('shape_filename')
+    state_uf = d.get('state_uf')
     lon_min, lat_min, lon_max, lat_max = d.get('lon_min'), d.get('lat_min'), d.get('lon_max'), d.get('lat_max')
     has_bbox = all(v is not None and str(v).strip() != "" for v in [lon_min, lat_min, lon_max, lat_max])
 
     if not url or (not mask_name and not state_uf and not has_bbox):
         return jsonify({'error': 'Dados incompletos.'}), 400
-    if not auth:
+    current_auth = get_earthdata_auth()
+    if not current_auth:
         return jsonify({'error': 'Falha no login NASA.'}), 500
 
     tmp_mask_dir = None
@@ -584,9 +597,7 @@ def download_cropped():
     gdf_mask = None
     try:
         if mask_name:
-            mask_path = upload_path(mask_name)
-            if not mask_path or not os.path.exists(mask_path):
-                return jsonify({"error": "Mascara enviada nao encontrada."}), 400
+            mask_path = os.path.join(app.config['UPLOAD_FOLDER'], mask_name)
             gdf_mask, tmp_mask_dir = carregar_geodataframe(mask_path)
         elif state_uf and state_uf != 'BR':
             gdf_mask, erro = _carregar_estado_gpkg(state_uf)
@@ -609,7 +620,7 @@ def download_cropped():
 
         mask_bounds = gdf_mask.total_bounds
 
-        session = auth.get_session()
+        session = current_auth.get_session()
         tmpdirname = tempfile.mkdtemp(dir=app.config['UPLOAD_FOLDER'])
         
         real_filename = url.split('/')[-1]
@@ -617,7 +628,7 @@ def download_cropped():
         short_input = os.path.join(tmpdirname, f"in{ext_orig}")
 
         sucesso_download = False
-        for tentativa in range(4):
+        for tentativa in range(4): 
             try:
                 with session.get(url, stream=True, timeout=90) as r:
                     r.raise_for_status()
@@ -625,10 +636,10 @@ def download_cropped():
                         shutil.copyfileobj(r.raw, f)
                 sucesso_download = True
                 break
-            except Exception:
+            except Exception as e:
                 print(f"[AVISO] Gargalo de Rede/NASA (Tentativa {tentativa+1}/4)")
-                time.sleep(2)
-
+                time.sleep(2) 
+        
         if not sucesso_download:
             return jsonify({'error': 'A NASA recusou a conexão após múltiplas tentativas. Tente selecionar menos arquivos por vez.'}), 502
 
@@ -639,7 +650,7 @@ def download_cropped():
         if ext_orig == '.zip':
             extract_path = os.path.join(tmpdirname, "x")
             with zipfile.ZipFile(short_input, 'r') as z:
-                z.extractall(extract_path)
+                _safe_extract_zip(z, extract_path)
             shps = glob.glob(os.path.join(extract_path, "**/*.shp"), recursive=True)
             if not shps:
                 return jsonify({'error': 'ZIP sem Shapefile.'}), 400
@@ -713,7 +724,7 @@ def download_cropped():
                             try:
                                 ds_espacial[var].rio.write_nodata(None, encoded=True, inplace=True)
                                 ds_espacial[var].rio.write_nodata(None, inplace=True)
-                            except Exception:
+                            except:
                                 pass
 
                     try:
@@ -724,7 +735,7 @@ def download_cropped():
                             maxy=float(mask_bounds[3])
                         )
                     except Exception:
-                        pass
+                        pass 
 
                     clipped = ds_espacial.rio.clip(
                         gdf_mask.geometry.values,
@@ -775,18 +786,16 @@ def download_cropped():
             del clipped
             gc.collect()
 
-        gc.collect()
-
-        with open(path_final, 'rb') as f:
-            file_data = f.read()
-
-        try:
-            os.remove(path_final)
-        except Exception:
-            pass 
+        @after_this_request
+        def cleanup_response_file(response):
+            try:
+                os.remove(path_final)
+            except Exception:
+                pass
+            return response
 
         return send_file(
-            io.BytesIO(file_data),
+            path_final,
             as_attachment=True,
             download_name=d_name,
             mimetype=mimetype
@@ -806,4 +815,5 @@ def download_cropped():
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    port = int(os.environ.get('PORT', '5050'))
+    app.run(host='127.0.0.1', port=port, debug=True, use_reloader=False)
