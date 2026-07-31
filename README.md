@@ -15,13 +15,13 @@ remotes::install_github("Lappicy/SWANr")
 
 ```r
 library(SWANr)
-SWANr::run_app()
+SWANr::SWANr_app()
 ```
 
 Também é possível escolher porta e navegador:
 
 ```r
-SWANr::run_app(host = "127.0.0.1", port = 8123, launch.browser = TRUE)
+SWANr::SWANr_app(host = "127.0.0.1", port = 8123, launch.browser = TRUE)
 ```
 
 ## Credenciais NASA Earthdata
@@ -31,7 +31,7 @@ antes de abrir o app:
 
 ```r
 Sys.setenv(NASA_EARTHDATA_TOKEN = "SEU_TOKEN_AQUI")
-SWANr::run_app()
+SWANr::SWANr_app()
 ```
 
 Ou via arquivo `.Renviron`:
@@ -63,7 +63,7 @@ mesmos nomes esperados pelo dashboard, para manter o app instalável via
 
 ## Função principal
 
-- `run_app()` / `run_swanr()`: inicia o dashboard Shiny.
+- `SWANr_app()`: inicia o dashboard Shiny.
 
 ## Desenvolvimento
 
