@@ -7,7 +7,7 @@ hidroinventário ANA/RHN via HidroWeb.
 Ao instalar o pacote pelo GitHub, abra o app com:
 
 ```r
-SWANr::run_app()
+SWANr::SWANr_app()
 ```
 
 As camadas em `camadas/` são versões adequadas para distribuição via GitHub.
