@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    {{ headContent() }}
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SWANr Shiny — Dados e análises do SWOT (coleção D) + OPERA (DSWx) + ANA (RHN)</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css">
+    <link rel="stylesheet" href="style.css?v=20260711-progress">
+    <link rel="stylesheet" href="layout-v2.css">
+</head>
+<body>
+    <header class="top-navbar">
+        <div class="nav-brand">
+            <span class="brand-mark"><img src="swan-logo.webp" alt="Logo do SWANr"></span>
+            <span class="brand-copy">
+                <strong>SWANr</strong>
+                <small>Dados e análises do SWOT (coleção D) + OPERA (DSWx) + ANA (RHN)</small>
+            </span>
+        </div>
+        <div class="header-context">
+            <span class="context-dot"></span>
+            <span>América do Sul</span>
+        </div>
+        <nav class="nav-menu" aria-label="Navegação principal">
+            <button type="button" class="nav-item" id="nav-camadas" data-tab="camadas">
+                <i data-lucide="layers"></i>
+                <span>Camadas</span>
+            </button>
+            <button type="button" class="nav-item active" id="nav-swot" data-tab="swot">
+                <i data-lucide="search"></i>
+                <span>Consulta</span>
+            </button>
+            <button type="button" class="nav-item" id="nav-analises" data-tab="analises">
+                <i data-lucide="cog"></i>
+                <span>Análises</span>
+            </button>
+            <button type="button" class="nav-item disabled" id="nav-resultados" data-tab="resultados">
+                <i data-lucide="list"></i>
+                <span>Resultados</span>
+            </button>
+            <button type="button" class="nav-item" id="nav-manual" data-tab="manual">
+                <i data-lucide="circle-help"></i>
+                <span>Manual</span>
+            </button>
+            <button type="button" class="nav-item" id="nav-projeto" data-tab="projeto">
+                <i data-lucide="info"></i>
+                <span>Projeto</span>
+            </button>
+            <button type="button" class="nav-item" id="nav-referencias" data-tab="referencias">
+                <i data-lucide="book-open"></i>
+                <span>Referências</span>
+            </button>
+            <div class="nav-separator"></div>
+            <div class="nav-item nav-dropdown" title="Mapas base">
+                <i data-lucide="globe-2"></i>
+                <div class="dropdown-content">
+                    <label><input type="radio" name="basemap_sel" value="sat" checked> Satélite</label>
+                    <label><input type="radio" name="basemap_sel" value="street"> Ruas</label>
+                </div>
+            </div>
+        </nav>
+    </header>
+
+    <main>
+        <div id="map"></div>
+        <aside class="aneel-panel" id="main-panel">
+            <section id="view-swot" class="panel-body">
+                <div class="panel-intro">
+                    <span class="panel-kicker">Dados orbitais e hidrológicos</span>
+                    <h2>Consultar produtos do SWOT, OPERA ou da ANA</h2>
+                    <p>Escolha a fonte de dados, delimite a área no mapa e consulte diretamente o catálogo Earthdata ou do Hidroweb.</p>
+                </div>
+                <form id="searchForm">
+                    <div class="filter-block data-source-block">
+                        <label for="data_source">0. Fonte de dados</label>
+                        <select id="data_source" name="data_source">
+                            <option value="SWOT" selected>SWOT</option>
+                            <option value="OPERA">OPERA</option>
+                            <option value="ANA">ANA</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-block">
+                        <div id="swot-product-fields">
+                            <label for="produto">1. Produto (Coleção D)</label>
+                            <select id="produto" name="produto">
+                                <option value="" disabled selected>Selecione...</option>
+                                <option value="RiverSP">SWOT_L2_HR_RiverSP_D</option>
+                                <option value="LakeSP">SWOT_L2_HR_LakeSP_D</option>
+                                <option value="PIXC">SWOT_L2_HR_PIXC_D</option>
+                                <option value="Raster">SWOT_L2_HR_Raster_D</option>
+                            </select>
+
+                            <div id="sub-river" class="sub-opts hidden">
+                                <label class="sub-label">Subproduto</label>
+                                <select id="river_subproduto" name="subproduto" class="sub-select">
+                                    <option value="Reach">Reach</option>
+                                    <option value="Node">Node</option>
+                                </select>
+                                <label class="sub-label">Continente</label>
+                                <select class="sub-select" disabled><option selected>América do Sul (SA)</option></select>
+                                <input type="hidden" name="continente" value="SA">
+                            </div>
+                            <div id="sub-lake" class="sub-opts hidden">
+                                <label class="sub-label">Tipo</label>
+                                <select id="lake_subproduto" name="subproduto" class="sub-select">
+                                    <option value="Prior">Prior</option>
+                                    <option value="Obs">Obs</option>
+                                    <option value="Unassigned">Unassigned</option>
+                                    <option value="Avg">Avg</option>
+                                </select>
+                                <label class="sub-label">Continente</label>
+                                <select class="sub-select" disabled><option selected>América do Sul (SA)</option></select>
+                                <input type="hidden" name="continente" value="SA">
+                            </div>
+                            <div id="sub-raster" class="sub-opts hidden">
+                                <label class="sub-label">Resolução</label>
+                                <select id="raster_resolucao" name="resolucao" class="sub-select">
+                                    <option value="100m">100m</option>
+                                    <option value="250m">250m</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div id="opera-product-fields" class="hidden">
+                            <label for="opera_produto">1. Produto OPERA</label>
+                            <select id="opera_produto" name="opera_produto" disabled>
+                                <option value="DSWx-HLS" selected>DSWx-HLS</option>
+                                <option value="DSWx-S1">DSWx-S1</option>
+                            </select>
+
+                            <label class="sub-label" for="opera_subproduto">Subproduto</label>
+                            <select id="opera_subproduto" name="opera_subproduto" class="sub-select" disabled>
+                                <option value="WTR">WTR</option>
+                                <option value="BWTR">BWTR</option>
+                                <option value="CONF">CONF</option>
+                                <option value="DIAG">DIAG</option>
+                                <option value="WTR2">WTR2</option>
+                            </select>
+                            <p id="opera-subproduct-help" class="inline-help"></p>
+                        </div>
+
+                        <div id="ana-product-fields" class="hidden">
+                            <label for="ana_produto">1. Produto (Estações Fluviométricas)</label>
+                            <select id="ana_produto" name="ana_produto" disabled>
+                                <option value="RHN" selected>Rede Hidrometeorológica Nacional (RHN)</option>
+                            </select>
+
+                            <label class="sub-label" for="ana_subproduto">Subproduto</label>
+                            <select id="ana_subproduto" name="ana_subproduto" class="sub-select" disabled>
+                                <option value="vazao_diaria" selected>Vazão (série histórica diária)</option>
+                                <option value="cota_diaria">Cota (série histórica diária)</option>
+                                <option value="hidroinventario">Hidroinventário</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="filter-block">
+                        <div class="filter-title-row">
+                            <label>2. Área de Interesse</label>
+                            <button type="button" class="btn-text compact" id="clear-area">
+                                <i data-lucide="trash-2"></i>
+                                <span>Limpar Área</span>
+                            </button>
+                        </div>
+                        <div class="aoi-tabs">
+                            <div class="upload-container">
+                                <p>Upload (.zip, .gpkg, .kml, .kmz)</p>
+                                {{ file_input }}
+                                <div id="shapeStatus"></div>
+                                <input type="hidden" id="uploadedShapeName">
+                            </div>
+                            <p class="divider-text">OU</p>
+                            <select id="brazil_states">
+                                <option value="">Selecione um Estado...</option>
+                                <option value="BR">BRASIL (Todo)</option>
+                                <optgroup label="Centro-Oeste">
+                                    <option value="DF">DF</option><option value="GO">GO</option>
+                                    <option value="MT">MT</option><option value="MS">MS</option>
+                                </optgroup>
+                                <optgroup label="Norte">
+                                    <option value="AC">AC</option><option value="AP">AP</option>
+                                    <option value="AM">AM</option><option value="PA">PA</option>
+                                    <option value="RO">RO</option><option value="RR">RR</option>
+                                    <option value="TO">TO</option>
+                                </optgroup>
+                                <optgroup label="Nordeste">
+                                    <option value="AL">AL</option><option value="BA">BA</option>
+                                    <option value="CE">CE</option><option value="MA">MA</option>
+                                    <option value="PB">PB</option><option value="PE">PE</option>
+                                    <option value="PI">PI</option><option value="RN">RN</option>
+                                    <option value="SE">SE</option>
+                                </optgroup>
+                                <optgroup label="Sudeste">
+                                    <option value="ES">ES</option><option value="MG">MG</option>
+                                    <option value="RJ">RJ</option><option value="SP">SP</option>
+                                </optgroup>
+                                <optgroup label="Sul">
+                                    <option value="RS">RS</option><option value="SC">SC</option>
+                                    <option value="PR">PR</option>
+                                </optgroup>
+                            </select>
+                            <p class="divider-text">OU DESENHE NO MAPA</p>
+                        </div>
+                        <div class="coord-grid small-inputs">
+                            <input type="number" step="any" id="lat_min" name="lat_min" placeholder="Lat Min" readonly>
+                            <input type="number" step="any" id="lat_max" name="lat_max" placeholder="Lat Max" readonly>
+                            <input type="number" step="any" id="lon_min" name="lon_min" placeholder="Lon Min" readonly>
+                            <input type="number" step="any" id="lon_max" name="lon_max" placeholder="Lon Max" readonly>
+                        </div>
+                    </div>
+
+                    <div class="filter-block query-period-block">
+                        <label>3. Período</label>
+                        <div id="date-msg" class="date-warning hidden"></div>
+                        <div class="coord-grid">
+                            <input type="date" name="start_date" id="start_date">
+                            <input type="date" name="end_date" id="end_date">
+                        </div>
+                    </div>
+
+                    <div id="opera-btn-container" class="query-button-block opera-query-button-block hidden">
+                        <button type="button" class="btn-aneel" id="opera-search-button">
+                            <i data-lucide="search"></i>
+                            <span>Consultar</span>
+                        </button>
+                    </div>
+
+                    <div class="filter-block swot-identification-block">
+                        <label>4. Identificação (Opcional)</label>
+                        <div class="grid-3">
+                            <input type="number" name="cycle" placeholder="Cycle">
+                            <input type="number" name="pass" placeholder="Pass">
+                            <input type="text" name="tile" placeholder="Tile">
+                        </div>
+                    </div>
+
+                    <div class="filter-block ana-additional-block hidden">
+                        <label>4. Dados adicionais (opcional)</label>
+                        <div class="coord-grid">
+                            <input type="text" name="ana_station_code" id="ana_station_code"
+                                   placeholder="Código da estação">
+                            <select name="ana_consistency" id="ana_consistency">
+                                <option value="1" selected>Bruto</option>
+                                <option value="2">Consistido</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="opera-finalizing" class="filter-block finalizing-block hidden">
+                        <i data-lucide="construction"></i>
+                        <span>(em processo de finalização...)</span>
+                    </div>
+                </form>
+
+                <div id="btn-container" class="query-button-block">
+                    <button type="button" class="btn-aneel" id="search-button">
+                        <i data-lucide="search"></i>
+                        <span>Consultar</span>
+                    </button>
+                    <div id="credential-status" class="credential-status"></div>
+                </div>
+            </section>
+
+            <section id="view-camadas" class="panel-body hidden">
+                <div class="panel-intro">
+                    <span class="panel-kicker">Visualização</span>
+                    <h2>Camadas do mapa</h2>
+                    <p>Ative referências territoriais, hidrológicas e orbitais sem sair do mapa.</p>
+                </div>
+                <div class="layer-search-card">
+                    <label for="layer-search-input">Encontrar no mapa</label>
+                    <div class="layer-search-row">
+                        <input id="layer-search-input" type="search"
+                               placeholder="UF, Sigla, código, nome...">
+                        <button id="layer-search-button" type="button" title="Pesquisar nas camadas">
+                            <i data-lucide="search"></i>
+                        </button>
+                    </div>
+                    <p>A busca é feita nas camadas abaixo.</p>
+                    <div id="layer-search-results" class="layer-search-results"></div>
+                </div>
+
+                <div class="layer-group">
+                    <button type="button" class="layer-group-toggle" aria-expanded="true">
+                        <span>1. Camadas de referência</span>
+                        <i data-lucide="chevron-up"></i>
+                    </button>
+                    <div class="layer-group-content">
+                        <h4 class="layer-subtitle">Limites administrativos</h4>
+                        <div class="layer-item">
+                            <label class="switch">
+                                <input type="checkbox" data-layer="limites_BR" data-title="Limites do Brasil" data-color="#000" data-kind="linha">
+                                <span class="slider round"></span>
+                            </label>
+                            <span class="layer-swatch swatch-limits"></span>
+                            <span class="layer-label">Unidades federativas</span>
+                        </div>
+
+                        <h4 class="layer-subtitle">Hidrografia e monitoramento</h4>
+                        <div class="layer-item">
+                            <label class="switch">
+                                <input type="checkbox" data-layer="SNIRH_OttobaciaNv1" data-title="Ottobacias N1" data-color="#FFD700" data-kind="linha">
+                                <span class="slider round"></span>
+                            </label>
+                            <span class="layer-swatch swatch-otto"></span>
+                            <span class="layer-label">Ottobacias (Nível 1)</span>
+                        </div>
+                        <div class="layer-item">
+                            <label class="switch">
+                                <input type="checkbox" data-layer="Estacoes_hidrometeorologicas_ANA" data-title="Estações Fluviométricas (ANA)" data-color="#0099FF" data-kind="ponto">
+                                <span class="slider round"></span>
+                            </label>
+                            <span class="layer-swatch swatch-stations"></span>
+                            <span class="layer-label">Estações Fluviométricas (ANA)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="layer-group">
+                    <button type="button" class="layer-group-toggle" aria-expanded="true">
+                        <span>2. Cobertura SWOT</span>
+                        <i data-lucide="chevron-up"></i>
+                    </button>
+                    <div class="layer-group-content">
+                        <div class="layer-item">
+                            <label class="switch">
+                                <input type="checkbox" data-layer="SWOT_orbits_BR" data-title="Órbitas SWOT" data-color="#FF0000" data-kind="linha">
+                                <span class="slider round"></span>
+                            </label>
+                            <span class="layer-swatch swatch-orbits"></span>
+                            <span class="layer-label">Órbitas (Passes)</span>
+                        </div>
+                        <div class="layer-item">
+                            <label class="switch">
+                                <input type="checkbox" data-layer="SWOT_tiles_BR" data-title="Grades SWOT" data-color="#00FFFF" data-kind="linha">
+                                <span class="slider round"></span>
+                            </label>
+                            <span class="layer-swatch swatch-tiles"></span>
+                            <span class="layer-label">Grades (Tiles)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="layer-group">
+                    <button type="button" class="layer-group-toggle" aria-expanded="true">
+                        <span>3. Cobertura OPERA</span>
+                        <i data-lucide="chevron-up"></i>
+                    </button>
+                    <div class="layer-group-content">
+                        <div class="layer-item">
+                            <label class="switch">
+                                <input type="checkbox" data-layer="OPERA_tiles" data-title="Grade OPERA" data-color="#ff8a00" data-kind="linha">
+                                <span class="slider round"></span>
+                            </label>
+                            <span class="layer-swatch swatch-opera"></span>
+                            <span class="layer-label">Grade OPERA</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="layer-group">
+                    <button type="button" class="layer-group-toggle" aria-expanded="true">
+                        <span>4. Bases auxiliares (SWORD / PLD)</span>
+                        <i data-lucide="chevron-up"></i>
+                    </button>
+                    <div class="layer-group-content">
+                        <div class="layer-item">
+                            <label class="switch">
+                                <input type="checkbox" data-layer="SWORD_reaches_v17b" data-title="Reaches SWORD v17b" data-color="#7c3aed" data-kind="linha">
+                                <span class="slider round"></span>
+                            </label>
+                            <span class="layer-swatch swatch-sword-reaches"></span>
+                            <span class="layer-label">Reaches (SWORD v17b)</span>
+                        </div>
+                        <div class="layer-item">
+                            <label class="switch">
+                                <input type="checkbox" data-layer="SWORD_nodes_v17b" data-title="Nodes SWORD v17b" data-color="#a855f7" data-kind="ponto">
+                                <span class="slider round"></span>
+                            </label>
+                            <span class="layer-swatch swatch-sword-nodes"></span>
+                            <span class="layer-label">Nodes (SWORD v17b)</span>
+                        </div>
+                        <div class="layer-item layer-disabled" title="Camada ainda não disponível nesta versão">
+                            <label class="switch">
+                                <input type="checkbox" disabled>
+                                <span class="slider round"></span>
+                            </label>
+                            <span class="layer-swatch swatch-pld"></span>
+                            <span class="layer-label">Prior Lake Database (PLD v2.0)</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="view-analises" class="panel-body hidden">
+                <div class="panel-intro">
+                    <span class="panel-kicker">Análises</span>
+                    <h2>Análises do SWANr</h2>
+                    <p>Módulo reservado para análises orbitais e hidrológicas a partir dos dados SWOT, OPERA e ANA.</p>
+                </div>
+                <div class="construction-banner">
+                    <i data-lucide="construction"></i>
+                    <strong>Em construção!</strong>
+                </div>
+            </section>
+
+            <section id="view-projeto" class="panel-body hidden">
+                <div class="panel-intro">
+                    <span class="panel-kicker preserve-case">SWANr</span>
+                    <h2>Sobre o projeto</h2>
+                    <p>Projeto realizado via TED entre a ANA e a UnB (no. 04687620240003), com parcerias internacionais.</p>
+                </div>
+
+                <div class="team-card unb">
+                    <h4><i data-lucide="graduation-cap"></i> Universidade de Brasília (UnB)</h4>
+                    <div class="team-grid">
+                        <span>Rejane Cicerelli</span><span>Tati de Almeida</span>
+                        <span class="team-row-gap"></span>
+                        <span>Thiago Lappicy</span><span>Daniel Beltrão</span>
+                        <span>Luana Sales</span><span></span>
+                        <span class="team-row-gap"></span>
+                        <span>Beatriz Brito</span><span>Joaquim Araujo</span>
+                        <span class="team-row-gap"></span>
+                        <span>Leonardo Moura</span><span>Reuel Ebezener</span>
+                    </div>
+                </div>
+
+                <div class="team-card ana">
+                    <h4><i data-lucide="droplet"></i> Agência Nacional de Águas (ANA)</h4>
+                    <div class="team-grid">
+                        <span>Alexandre Abdalla</span><span>Alexandre Amorim</span>
+                        <span>Ana Clara Matos</span><span>Cássio Rampinelli</span>
+                        <span>Dhalton Ventura</span><span>Klaus Reitz</span>
+                        <span>Luis Cordeiro</span><span>Marcos Pufal</span>
+                        <span>Maurício Cordeiro</span><span>Saulo de Souza</span>
+                        <span>Teresa Carvalho</span><span>Vinícius Roman</span>
+                    </div>
+                </div>
+
+                <div class="team-card collab">
+                    <h4><i data-lucide="globe-2"></i> Outros Colaboradores</h4>
+                    <ul>
+                        <li>Renato Frasson (JPL / NASA)</li>
+                        <li>Augusto Getirana (Goddard / NASA)</li>
+                        <li>Mohammadjavad Tourian (Stuttgart)</li>
+                    </ul>
+                </div>
+            </section>
+
+            <section id="view-referencias" class="panel-body hidden">
+                <div class="panel-intro">
+                    <span class="panel-kicker">Documentação</span>
+                    <h2>Referências</h2>
+                    <p>Artigos realizados no âmbito do projeto.</p>
+                </div>
+                <div class="reference-list">
+                    <article class="reference-card">
+                        <span class="reference-year">2026</span>
+                        <h3>A Large-Scale Evaluation of SWOT-Derived Water Surface Elevations: Precision Drivers and Strategies to Enhance Data Availability</h3>
+                        <p>Lappicy, T.; Beltrão, D.; Sales, L.O.; Almeida, T.; Pessoa, G.G.; Souza, S.; Frasson, R.P.d.M.; Cicerelli, R.E.</p>
+                        <div class="reference-meta">Remote Sensing, 18(10), 1609</div>
+                        <a href="https://doi.org/10.3390/rs18101609" target="_blank" rel="noopener noreferrer">
+                            <i data-lucide="external-link"></i> 10.3390/rs18101609
+                        </a>
+                    </article>
+                    <article class="reference-card">
+                        <span class="reference-year">2026</span>
+                        <h3>SWOT: Reviewing Challenges and Opportunities in Hydrological Applications to Inland Waters</h3>
+                        <p>Beltrão, D.; Cicerelli, R.; Lappicy, T.; Sales, L.; Teixeira, A.; Cunha, L.; Andrade, A.; Almeida, T.</p>
+                        <div class="reference-meta">IEEE Access, 14, 77225–77238</div>
+                        <a href="https://doi.org/10.1109/ACCESS.2026.3690929" target="_blank" rel="noopener noreferrer">
+                            <i data-lucide="external-link"></i> 10.1109/ACCESS.2026.3690929
+                        </a>
+                    </article>
+                    <article class="reference-card">
+                        <span class="reference-year">2025</span>
+                        <h3>SWOT Satellite Nodes as Virtual Stations During the 2024 Extreme Flood in Southern Brazil</h3>
+                        <p>Sales, L.O.; Lappicy, T.; Beltrão, D.; de Amorim Teixeira, A.; Cicerelli, R.; Almeida, T.</p>
+                        <div class="reference-meta">Hydrology, 12(10), 248</div>
+                        <a href="https://doi.org/10.3390/hydrology12100248" target="_blank" rel="noopener noreferrer">
+                            <i data-lucide="external-link"></i> 10.3390/hydrology12100248
+                        </a>
+                    </article>
+                    <div class="references-coming">
+                        <i data-lucide="ellipsis"></i>
+                        <span>Outros artigos em andamento...</span>
+                    </div>
+                </div>
+            </section>
+
+            <section id="view-manual" class="panel-body hidden">
+                <div class="panel-intro">
+                    <span class="panel-kicker">Primeiros passos</span>
+                    <h2>Manual do usuário</h2>
+                    <p>O fluxo completo, da seleção do produto ao arquivo final.</p>
+                </div>
+                <div class="manual-accordion">
+                    <div class="layer-group manual-topic">
+                        <button type="button" class="layer-group-toggle" aria-expanded="true">
+                            <span>SWOT</span>
+                            <i data-lucide="chevron-up"></i>
+                        </button>
+                        <div class="layer-group-content">
+                            <div class="manual-steps">
+                                <article class="manual-step">
+                                    <span>01</span>
+                                    <div><h3>Escolha o produto</h3><p>Selecione RiverSP, LakeSP, PIXC ou Raster e o subproduto desejado.</p></div>
+                                </article>
+                                <article class="manual-step">
+                                    <span>02</span>
+                                    <div><h3>Defina a área</h3><p>Envie um arquivo, selecione um estado ou desenhe um retângulo diretamente no mapa.</p></div>
+                                </article>
+                                <article class="manual-step">
+                                    <span>03</span>
+                                    <div><h3>Informe o período</h3><p>Escolha as datas inicial e final. Ciclo, passagem e tile são opcionais.</p></div>
+                                </article>
+                                <article class="manual-step">
+                                    <span>04</span>
+                                    <div><h3>Consulte a NASA</h3><p>O SWANr encontra os granules compatíveis e prioriza a melhor versão disponível.</p></div>
+                                </article>
+                                <article class="manual-step">
+                                    <span>05</span>
+                                    <div><h3>Baixe ou recorte</h3><p>Selecione os resultados e gere um ZIP com os dados e o relatório da operação.</p></div>
+                                </article>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="layer-group manual-topic">
+                        <button type="button" class="layer-group-toggle" aria-expanded="true">
+                            <span>OPERA</span>
+                            <i data-lucide="chevron-up"></i>
+                        </button>
+                        <div class="layer-group-content">
+                            <div class="manual-steps">
+                                <article class="manual-step">
+                                    <span>01</span>
+                                    <div><h3>Escolha o produto</h3><p>Selecione DSWx-HLS ou DSWx-S1 e o subproduto desejado.</p></div>
+                                </article>
+                                <article class="manual-step">
+                                    <span>02</span>
+                                    <div><h3>Defina a área</h3><p>Envie um arquivo, selecione um estado ou desenhe a área diretamente no mapa.</p></div>
+                                </article>
+                                <article class="manual-step">
+                                    <span>03</span>
+                                    <div><h3>Informe o período</h3><p>O SWANr usa as datas para consultar e baixar os granules OPERA compatíveis.</p></div>
+                                </article>
+                                <article class="manual-step">
+                                    <span>04</span>
+                                    <div><h3>Execute o fluxo</h3><p>Os nodes SWORD v17b são recortados, os buffers e Thiessen são criados e os arquivos OPERA são baixados.</p></div>
+                                </article>
+                                <article class="manual-step">
+                                    <span>05</span>
+                                    <div><h3>Baixe o ZIP</h3><p>Selecione os arquivos OPERA retornados e gere o pacote final com relatório.</p></div>
+                                </article>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="layer-group manual-topic">
+                        <button type="button" class="layer-group-toggle" aria-expanded="true">
+                            <span>ANA</span>
+                            <i data-lucide="chevron-up"></i>
+                        </button>
+                        <div class="layer-group-content">
+                            <div class="construction-banner manual-construction">
+                                <i data-lucide="construction"></i>
+                                <strong>Em construção!</strong>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="view-resultados" class="panel-body results-view hidden">
+                <div class="panel-intro results-intro">
+                    <span class="panel-kicker" id="results-kicker">Catálogo Earthdata</span>
+                    <h2>Resultados da consulta</h2>
+                    <p id="results-description">Selecione os arquivos que deseja baixar ou recortar pela área definida.</p>
+                </div>
+                <div id="results-meta" class="hidden">
+                    <div class="results-summary">
+                        <span id="total-count">0</span> <span id="total-label">arquivos</span> • <span id="total-size">0 MB</span>
+                    </div>
+                    <div class="results-toolbar">
+                        <label>
+                            <input type="checkbox" id="select-all">
+                            Selecionar Todos
+                        </label>
+                    </div>
+                </div>
+
+                <div id="results-container-wrapper">
+                    <div id="results-list" class="results-list hidden"></div>
+                    <div id="progress-container" class="loading-overlay hidden">
+                        <div class="loader-content">
+                            <div class="loader-spinner"></div>
+                            <p id="loader-message">Buscando na NASA...</p>
+                            <span id="loader-detail">Iniciando consulta...</span>
+                        </div>
+                        <div class="progress-bar-bg" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                            <div id="progress-fill"></div>
+                            <span id="progress-percent">0%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <button id="btn-download-selected" type="button" class="btn-aneel download hidden" disabled>
+                    <i data-lucide="download"></i>
+                    <span>Baixar Selecionados</span>
+                </button>
+                <button type="button" class="btn-text secondary" id="reset-search">
+                    <i data-lucide="rotate-ccw"></i>
+                    <span>Voltar e Iniciar Nova Consulta</span>
+                </button>
+            </section>
+        </aside>
+    </main>
+
+    <div id="toast-container"></div>
+    <div id="shiny-download-holder" aria-hidden="true">{{ download_link }}</div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="app.js?v=20260711-progress"></script>
+    <script>
+        (function () {
+            var operaHelp = {
+                WTR: 'Classe temática completa: água, não água e classes auxiliares.',
+                BWTR: 'Mapa binário: água / não água.',
+                CONF: 'Camada de confiança da classificação.',
+                DIAG: 'Diagnóstico dos testes positivos de detecção.',
+                WTR2: 'Alternativa menos mascarada, com mais pixels candidatos a água.'
+            };
+
+            function setDisabled(container, disabled) {
+                if (!container) return;
+                container.querySelectorAll('input, select, textarea, button').forEach(function (control) {
+                    control.disabled = disabled;
+                });
+            }
+
+            function updateOperaHelp() {
+                var subproduto = document.getElementById('opera_subproduto');
+                var help = document.getElementById('opera-subproduct-help');
+                if (!subproduto || !help) return;
+                var value = subproduto.value || 'WTR';
+                help.innerHTML = '<strong>' + value + '</strong> — ' + (operaHelp[value] || '');
+            }
+
+            function forceDataSourceMode() {
+                var source = document.getElementById('data_source');
+                var value = source ? source.value : 'SWOT';
+                var isSwot = value === 'SWOT';
+                var isOpera = value === 'OPERA';
+                var isAna = value === 'ANA';
+                var swotFields = document.getElementById('swot-product-fields');
+                var operaFields = document.getElementById('opera-product-fields');
+                var anaFields = document.getElementById('ana-product-fields');
+                var finalizing = document.getElementById('opera-finalizing');
+                var periodBlock = document.querySelector('.query-period-block');
+                var swotIdentification = document.querySelector('.swot-identification-block');
+                var anaAdditional = document.querySelector('.ana-additional-block');
+                var buttonBlock = document.getElementById('btn-container');
+                var operaButtonBlock = document.querySelector('.opera-query-button-block');
+                var startDate = document.getElementById('start_date');
+                var endDate = document.getElementById('end_date');
+
+                if (swotFields) swotFields.classList.toggle('hidden', !isSwot);
+                if (operaFields) operaFields.classList.toggle('hidden', !isOpera);
+                if (anaFields) anaFields.classList.toggle('hidden', !isAna);
+                if (finalizing) finalizing.classList.add('hidden');
+                if (periodBlock) periodBlock.classList.remove('hidden');
+                if (swotIdentification) swotIdentification.classList.toggle('hidden', !isSwot);
+                if (anaAdditional) anaAdditional.classList.toggle('hidden', !isAna);
+                if (buttonBlock) buttonBlock.classList.toggle('hidden', isOpera);
+                if (operaButtonBlock) operaButtonBlock.classList.toggle('hidden', !isOpera);
+                document.querySelectorAll('.swot-only-block').forEach(function (block) {
+                    block.classList.remove('hidden');
+                });
+
+                setDisabled(swotFields, !isSwot);
+                setDisabled(operaFields, !isOpera);
+                setDisabled(anaFields, !isAna);
+                if (source) source.disabled = false;
+                if (startDate) startDate.min = isSwot ? '2022-02-15' : '';
+                if (endDate) endDate.min = isSwot ? '2022-02-15' : '';
+                updateOperaHelp();
+                if (window.lucide) window.lucide.createIcons();
+            }
+
+            window.SWANrForceDataSourceMode = forceDataSourceMode;
+            function toggleLayerGroup(button) {
+                var group = button && button.closest('.layer-group');
+                if (!group) return;
+                var collapsed = group.classList.toggle('collapsed');
+                button.setAttribute('aria-expanded', String(!collapsed));
+                if (window.lucide) window.lucide.createIcons();
+            }
+
+            document.addEventListener('DOMContentLoaded', function () {
+                var source = document.getElementById('data_source');
+                var subproduto = document.getElementById('opera_subproduto');
+                if (source) source.addEventListener('change', forceDataSourceMode);
+                if (subproduto) subproduto.addEventListener('change', updateOperaHelp);
+                if (!window.SWANrAccordionReady) {
+                    document.querySelectorAll('.layer-group-toggle').forEach(function (button) {
+                        button.addEventListener('click', function (event) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            toggleLayerGroup(button);
+                        });
+                    });
+                }
+                forceDataSourceMode();
+            });
+            window.setTimeout(forceDataSourceMode, 250);
+            window.setTimeout(forceDataSourceMode, 1000);
+        }());
+    </script>
+</body>
+</html>
