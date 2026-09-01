@@ -607,7 +607,7 @@ async function processarFilaDownloads(tarefas, btn, textoOriginal, nomeFinalZip)
 
     var resultados = new Array(tarefas.length);
 
-    var CONCORRENCIA = 3;
+    var CONCORRENCIA = 1;
     var proxIdx = 0;
     var concluidos = 0;
 
@@ -677,7 +677,7 @@ async function baixarRecortado(url, statusId, shape, stateUF, lon_min, lat_min, 
     if (statusSpan) { statusSpan.innerText = '⏳ Recortando...'; statusSpan.style.color = '#e66a00'; }
 
     var controller = new AbortController();
-    var timeout    = setTimeout(function () { controller.abort(); }, 3 * 60 * 1000);
+    var timeout    = setTimeout(function () { controller.abort(); }, 10 * 60 * 1000);
 
     try {
         var reqBody = { granule_url: url };
@@ -708,9 +708,19 @@ async function baixarRecortado(url, statusId, shape, stateUF, lon_min, lat_min, 
                     }
                     return { tipo: 'vazio', msg: 'Sem sobreposição na área de interesse.' };
                 }
+                if (data.status === 'error' || data.error) {
+                    var msgErroJson = data.message || data.error || 'Erro desconhecido no recorte.';
+                    if (statusSpan) {
+                        statusSpan.innerText = '❌ Falha';
+                        statusSpan.style.color = 'red';
+                        statusSpan.title = msgErroJson;
+                    }
+                    return { tipo: 'erro', msg: 'Falha: ' + msgErroJson };
+                }
             }
 
             var blob = await r.blob();
+            var nomeServidor = nomeArquivoResposta(r);
             var nomeOriginal    = url.split('/').pop().split('?')[0];
             var nomeSemExtensao = nomeOriginal.substring(0, nomeOriginal.lastIndexOf('.')) || nomeOriginal;
             var ext = '.geojson';
@@ -718,9 +728,10 @@ async function baixarRecortado(url, statusId, shape, stateUF, lon_min, lat_min, 
             if (u.includes('.zip')) ext = '.zip';
             else if (u.includes('.nc')) ext = '.nc';
             else if (u.includes('.gpkg')) ext = '.gpkg';
+            var nomeFinal = nomeServidor || ('recorte_' + nomeSemExtensao + ext);
 
             if (statusSpan) { statusSpan.innerText = '✅ Salvo'; statusSpan.style.color = 'green'; }
-            return { tipo: 'salvo', msg: 'Recorte efetuado com sucesso.', blob: blob, nomeFinal: 'recorte_' + nomeSemExtensao + ext };
+            return { tipo: 'salvo', msg: 'Recorte efetuado com sucesso.', blob: blob, nomeFinal: nomeFinal };
 
         } else {
             var err    = await r.json().catch(function () { return {}; });
@@ -731,11 +742,22 @@ async function baixarRecortado(url, statusId, shape, stateUF, lon_min, lat_min, 
     } catch (e) {
         clearTimeout(timeout);
         var msg = e.name === 'AbortError'
-            ? 'Timeout: servidor demorou mais de 3 minutos.'
+            ? 'Timeout: servidor demorou mais de 10 minutos.'
             : 'Falha de comunicação com o servidor.';
         if (statusSpan) { statusSpan.innerText = '❌ ' + (e.name === 'AbortError' ? 'Timeout' : 'Sem Conexão'); statusSpan.style.color = 'red'; }
         return { tipo: 'erro', msg: msg };
     }
+}
+
+function nomeArquivoResposta(response) {
+    var cd = response.headers.get('content-disposition') || '';
+    var utf8 = cd.match(/filename\*=UTF-8''([^;]+)/i);
+    if (utf8 && utf8[1]) {
+        try { return decodeURIComponent(utf8[1].replace(/"/g, '')); }
+        catch (e) { return utf8[1].replace(/"/g, ''); }
+    }
+    var normal = cd.match(/filename="?([^";]+)"?/i);
+    return normal && normal[1] ? normal[1] : '';
 }
 
 function baixarBlob(blob, nome) {

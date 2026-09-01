@@ -69,6 +69,8 @@ COLLECTIONS_BASE = {
     "Raster": "SWOT_L2_HR_Raster_D"
 }
 
+MAX_GRANULE_PATTERNS = 40
+
 _CACHE_MAX = 10
 CACHE_ESTADOS = OrderedDict()
 _CACHE_COL_UF = {}
@@ -80,6 +82,370 @@ def _cache_set(cache, key, value, max_size):
     cache[key] = value
     if len(cache) > max_size:
         cache.popitem(last=False)
+
+def _numero_3(valor):
+    n = re.findall(r'\d+', str(valor))
+    return n[0].zfill(3) if n else None
+
+def _pixc_tile_codes(tile):
+    txt = str(tile).strip().upper()
+    n = _numero_3(txt)
+    if not n:
+        return []
+    if re.search(r'[LR]\s*$', txt):
+        return [f"{n}{txt[-1]}"]
+    return [f"{n}L", f"{n}R"]
+
+def _raster_scene_codes(tile):
+    n = _numero_3(tile)
+    if not n:
+        return []
+    tile_num = int(n)
+    scenes = {
+        tile_num // 2,
+        (tile_num + 1) // 2
+    }
+    return [str(s).zfill(3) for s in sorted(scenes) if 1 <= s <= 154]
+
+def _is_pixc_file(filename):
+    return "SWOT_L2_HR_PIXC" in str(filename).upper()
+
+def _sanitize_gpkg_column(name, used):
+    base = re.sub(r'[^0-9A-Za-z_]+', '_', str(name)).strip('_') or 'var'
+    base = base[:55]
+    candidate = base
+    idx = 2
+    while candidate.lower() in used:
+        suffix = f"_{idx}"
+        candidate = f"{base[:55 - len(suffix)]}{suffix}"
+        idx += 1
+    used.add(candidate.lower())
+    return candidate
+
+def _pixc_to_geopackage(caminho, gdf_mask, mask_bounds, out_path):
+    import numpy as np
+    import netCDF4
+
+    def find_coord_vars(group):
+        nomes = {n.lower(): n for n in group.variables}
+        lon_name = next((nomes[n] for n in ["longitude", "lon"] if n in nomes), None)
+        lat_name = next((nomes[n] for n in ["latitude", "lat"] if n in nomes), None)
+        return lon_name, lat_name
+
+    with netCDF4.Dataset(caminho, "r") as nc:
+        candidate_groups = []
+        if "pixel_cloud" in nc.groups:
+            candidate_groups.append(nc.groups["pixel_cloud"])
+        candidate_groups.extend(g for name, g in nc.groups.items() if name != "pixel_cloud")
+        candidate_groups.append(nc)
+
+        group = None
+        lon_name = lat_name = None
+        for candidate in candidate_groups:
+            lon_name, lat_name = find_coord_vars(candidate)
+            if lon_name and lat_name:
+                group = candidate
+                break
+
+        if group is None:
+            raise ValueError("PIXC sem variaveis latitude/longitude para gerar camada georreferenciada.")
+
+        lon_data = group.variables[lon_name][:]
+        lat_data = group.variables[lat_name][:]
+        if hasattr(lon_data, "filled"):
+            lon_data = lon_data.filled(np.nan)
+        if hasattr(lat_data, "filled"):
+            lat_data = lat_data.filled(np.nan)
+        lon = np.asarray(lon_data).reshape(-1)
+        lat = np.asarray(lat_data).reshape(-1)
+        bbox_mask = (
+            np.isfinite(lon) &
+            np.isfinite(lat) &
+            (lon >= float(mask_bounds[0])) &
+            (lon <= float(mask_bounds[2])) &
+            (lat >= float(mask_bounds[1])) &
+            (lat <= float(mask_bounds[3]))
+        )
+
+        if not np.any(bbox_mask):
+            raise ValueError("NoDataInBounds")
+
+        geom_mask = gdf_mask.geometry.union_all() if hasattr(gdf_mask.geometry, "union_all") else gdf_mask.geometry.unary_union
+        try:
+            from shapely import contains_xy
+            inside = contains_xy(geom_mask, lon, lat)
+        except Exception:
+            try:
+                from shapely.vectorized import contains
+                inside = contains(geom_mask, lon, lat)
+            except Exception:
+                from shapely.geometry import Point
+                inside = np.array([geom_mask.contains(Point(x, y)) for x, y in zip(lon, lat)])
+
+        mask = bbox_mask & inside
+        if not np.any(mask):
+            raise ValueError("NoDataInBounds")
+
+        idx = np.where(mask)[0]
+        data = OrderedDict()
+        data["longitude"] = lon[idx]
+        data["latitude"] = lat[idx]
+        used_cols = {"longitude", "latitude", "geometry"}
+
+        for var_name, var in group.variables.items():
+            if var_name in {lon_name, lat_name}:
+                continue
+            if len(var.dimensions) != 1 or var.shape[0] != lon.shape[0]:
+                continue
+            if len(data) >= 80:
+                break
+            arr = var[:]
+            if hasattr(arr, "filled"):
+                fill_value = np.nan if arr.dtype.kind in "fc" else None
+                arr = arr.filled(fill_value)
+            arr = np.asarray(arr).reshape(-1)[idx]
+            if arr.dtype.kind not in "biufSU":
+                continue
+            col = _sanitize_gpkg_column(var_name, used_cols)
+            data[col] = arr
+
+        df = pd.DataFrame(data)
+        gdf_pixc = gpd.GeoDataFrame(
+            df,
+            geometry=gpd.points_from_xy(df["longitude"], df["latitude"]),
+            crs="EPSG:4326"
+        )
+        gdf_pixc.to_file(out_path, layer="pixel_cloud", driver="GPKG")
+        return len(gdf_pixc)
+
+def _achar_var_coord(ds, nomes):
+    nomes_lower = {n.lower() for n in nomes}
+    candidatos = list(ds.coords) + list(ds.data_vars)
+    for nome in candidatos:
+        if nome.lower() in nomes_lower:
+            return nome
+    for nome in candidatos:
+        nome_lower = nome.lower()
+        if any(n in nome_lower for n in nomes_lower):
+            return nome
+    return None
+
+def _preparar_dims_rioxarray(ds):
+    try:
+        return ds.rio.x_dim, ds.rio.y_dim
+    except Exception:
+        pass
+
+    x_dim = next((d for d in ["x", "lon", "longitude"] if d in ds.dims), None)
+    y_dim = next((d for d in ["y", "lat", "latitude"] if d in ds.dims), None)
+
+    lon_name = _achar_var_coord(ds, ["lon", "longitude"])
+    lat_name = _achar_var_coord(ds, ["lat", "latitude"])
+    if lon_name and lat_name:
+        lon_dims = ds[lon_name].dims
+        lat_dims = ds[lat_name].dims
+        if len(lon_dims) == 1 and len(lat_dims) == 1:
+            x_dim = x_dim or lon_dims[0]
+            y_dim = y_dim or lat_dims[0]
+
+    if x_dim and y_dim:
+        return x_dim, y_dim
+    return None, None
+
+def _clip_netcdf_dataset(ds, gdf_mask, mask_bounds):
+    import numpy as np
+
+    lon_name = _achar_var_coord(ds, ["lon", "longitude"])
+    lat_name = _achar_var_coord(ds, ["lat", "latitude"])
+
+    if lon_name and lat_name:
+        lon = ds[lon_name]
+        lat = ds[lat_name]
+        dims_comuns = [d for d in lon.dims if d in lat.dims and lon.sizes.get(d) == lat.sizes.get(d)]
+        if dims_comuns:
+            lon_vals = lon.values
+            lat_vals = lat.values
+            bbox_mask = (
+                (lon_vals >= float(mask_bounds[0])) &
+                (lon_vals <= float(mask_bounds[2])) &
+                (lat_vals >= float(mask_bounds[1])) &
+                (lat_vals <= float(mask_bounds[3]))
+            )
+
+            if not np.any(bbox_mask):
+                raise ValueError("NoDataInBounds")
+
+            geom = gdf_mask.geometry.union_all() if hasattr(gdf_mask.geometry, "union_all") else gdf_mask.geometry.unary_union
+            try:
+                from shapely import contains_xy
+                inside = contains_xy(geom, lon_vals, lat_vals)
+            except Exception:
+                try:
+                    from shapely.vectorized import contains
+                    inside = contains(geom, lon_vals, lat_vals)
+                except Exception:
+                    from shapely.geometry import Point
+                    inside = np.array([
+                        geom.contains(Point(x, y))
+                        for x, y in zip(lon_vals.ravel(), lat_vals.ravel())
+                    ]).reshape(lon_vals.shape)
+
+            mask = bbox_mask & inside
+            if not np.any(mask):
+                raise ValueError("NoDataInBounds")
+
+            mask_da = xr.DataArray(
+                mask,
+                dims=lon.dims,
+                coords={d: lon.coords[d] for d in lon.dims if d in lon.coords}
+            )
+            dims_ponto = set(lon.dims)
+            recortaveis = [
+                var for var in ds.data_vars
+                if set(ds[var].dims).issubset(dims_ponto) and len(ds[var].dims) > 0
+            ]
+            auxiliares = [
+                var for var in ds.data_vars
+                if var not in recortaveis and len(ds[var].dims) == 0
+            ]
+            if lon_name in ds.data_vars and lon_name not in recortaveis:
+                recortaveis.append(lon_name)
+            if lat_name in ds.data_vars and lat_name not in recortaveis:
+                recortaveis.append(lat_name)
+
+            partes = []
+            if recortaveis:
+                if len(lon.dims) == 1:
+                    ponto_dim = lon.dims[0]
+                    idx = np.where(mask)[0]
+                    partes.append(ds[recortaveis].isel({ponto_dim: idx}))
+                else:
+                    partes.append(ds[recortaveis].where(mask_da, drop=True))
+            if auxiliares:
+                partes.append(ds[auxiliares])
+            if not partes:
+                raise ValueError("NetCDF sem variaveis recortaveis.")
+            return xr.merge(partes, compat="override")
+
+    x_dim, y_dim = _preparar_dims_rioxarray(ds)
+    if x_dim and y_dim:
+        ds = ds.rio.set_spatial_dims(x_dim=x_dim, y_dim=y_dim, inplace=False)
+        if ds.rio.crs is None:
+            ds = ds.rio.write_crs("EPSG:4326")
+
+        dims_espaciais = {x_dim, y_dim}
+        vars_espaciais = [
+            var for var in ds.data_vars
+            if dims_espaciais.issubset(set(ds[var].dims))
+        ]
+        vars_auxiliares = [var for var in ds.data_vars if var not in vars_espaciais]
+        ds_espacial = ds[vars_espaciais] if vars_espaciais else ds
+
+        try:
+            ds_espacial = ds_espacial.rio.clip_box(
+                minx=float(mask_bounds[0]),
+                miny=float(mask_bounds[1]),
+                maxx=float(mask_bounds[2]),
+                maxy=float(mask_bounds[3])
+            )
+        except Exception:
+            pass
+
+        clipped = ds_espacial.rio.clip(
+            gdf_mask.geometry.values,
+            gdf_mask.crs,
+            drop=True,
+            all_touched=True
+        )
+
+        for var in vars_auxiliares:
+            try:
+                clipped[var] = ds[var]
+            except Exception:
+                pass
+        return clipped
+
+    if lon_name and lat_name:
+        raise ValueError("Longitude/latitude existem, mas nao compartilham uma dimensao recortavel.")
+    raise ValueError("Nao encontrei variaveis de longitude/latitude no NetCDF.")
+
+def _listar_grupos_netcdf(caminho):
+    try:
+        import netCDF4
+    except Exception:
+        return []
+
+    grupos = []
+
+    def visitar(grupo, prefixo=""):
+        for nome, subgrupo in grupo.groups.items():
+            caminho_grupo = f"{prefixo}/{nome}" if prefixo else nome
+            grupos.append(caminho_grupo)
+            visitar(subgrupo, caminho_grupo)
+
+    with netCDF4.Dataset(caminho, "r") as nc:
+        visitar(nc)
+    return grupos
+
+def _clip_netcdf_file(caminho, gdf_mask, mask_bounds):
+    erros = []
+    grupos = [None] + _listar_grupos_netcdf(caminho)
+
+    for grupo in grupos:
+        try:
+            kwargs = {"decode_coords": "all"}
+            if grupo:
+                kwargs["group"] = grupo
+            with xr.open_dataset(caminho, **kwargs) as ds:
+                clipped = _clip_netcdf_dataset(ds, gdf_mask, mask_bounds)
+                clipped.attrs["swot_source_group"] = grupo or "/"
+                return clipped.load()
+        except Exception as e:
+            erros.append(f"{grupo or '/'}: {type(e).__name__}: {e}")
+            if "NoDataInBounds" in str(type(e)) or "NoDataInBounds" in str(e) or "No data found" in str(e):
+                continue
+
+    if erros:
+        raise ValueError("Nao foi possivel recortar nenhum grupo NetCDF. " + " | ".join(erros[:6]))
+    raise ValueError("NetCDF sem grupos ou variaveis recortaveis.")
+
+def _restaurar_metadados_espaciais_netcdf(ds):
+    if "crs" not in ds.variables:
+        return ds
+
+    if "crs" in ds.coords and "crs" not in ds.dims:
+        try:
+            ds = ds.reset_coords("crs")
+        except Exception:
+            pass
+
+    lon_name = _achar_var_coord(ds, ["lon", "longitude"])
+    lat_name = _achar_var_coord(ds, ["lat", "latitude"])
+    x_dim, y_dim = _preparar_dims_rioxarray(ds)
+    coords_attr = " ".join(n for n in [lon_name, lat_name] if n)
+
+    for var in list(ds.data_vars):
+        if var in {"crs", lon_name, lat_name}:
+            continue
+
+        dims = set(ds[var].dims)
+        eh_raster_xy = bool(x_dim and y_dim and {x_dim, y_dim}.issubset(dims))
+        eh_raster_lonlat = bool(
+            lon_name and lat_name and
+            set(ds[lon_name].dims).issubset(dims) and
+            set(ds[lat_name].dims).issubset(dims)
+        )
+        if not (eh_raster_xy or eh_raster_lonlat):
+            continue
+
+        ds[var].attrs["grid_mapping"] = "crs"
+        if coords_attr:
+            ds[var].attrs.pop("coordinates", None)
+            ds[var].encoding["coordinates"] = coords_attr
+        else:
+            ds[var].encoding.pop("coordinates", None)
+
+    return ds
 
 def remover_z(geom):
     return shapely_transform(lambda x, y, *_: (x, y), geom)
@@ -409,9 +775,9 @@ def buscar_dados():
                             elif prod in ['PIXC', 'Raster'] and t_col:
                                 if p_col:
                                     for _, row in inter.iterrows():
-                                        n = re.findall(r'\d+', str(row[p_col]))
-                                        if n and str(row[t_col]):
-                                            tiles_encontrados.append((n[0].zfill(3), str(row[t_col])))
+                                        p = _numero_3(row[p_col])
+                                        if p and str(row[t_col]):
+                                            tiles_encontrados.append((p, str(row[t_col])))
                                     tiles_encontrados = list(set(tiles_encontrados))
                                 else:
                                     tiles_encontrados = inter[t_col].astype(str).unique().tolist()
@@ -446,24 +812,33 @@ def buscar_dados():
                     for t in tiles_encontrados:
                         if isinstance(t, tuple):
                             if prod == 'Raster':
-                                patterns.append(f"*_{sub}_{cycle_val}_{t[0]}_{t[1]}_*".replace("**", "*"))
+                                for scene in _raster_scene_codes(t[1]):
+                                    patterns.append(f"*_{sub}_*_{cycle_val}_{t[0]}_{scene}*".replace("**", "*"))
                             else:
-                                patterns.append(f"*_{cycle_val}_{t[0]}_{t[1]}_*".replace("**", "*"))
+                                for tile in _pixc_tile_codes(t[1]):
+                                    patterns.append(f"*_{cycle_val}_{t[0]}_{tile}*".replace("**", "*"))
                         else:
                             if prod == 'Raster':
-                                patterns.append(f"*_{sub}_{cycle_val}_{pass_val}_{t}_*".replace("**", "*"))
+                                for scene in _raster_scene_codes(t):
+                                    patterns.append(f"*_{sub}_*_{cycle_val}_{pass_val}_{scene}*".replace("**", "*"))
                             else:
-                                patterns.append(f"*_{cycle_val}_{pass_val}_{t}_*".replace("**", "*"))
+                                for tile in _pixc_tile_codes(t):
+                                    patterns.append(f"*_{cycle_val}_{pass_val}_{tile}*".replace("**", "*"))
 
         if not usou_smart_filter:
             if prod in ['RiverSP', 'LakeSP']:
                 patterns.append(f"*_{sub}_{cycle_val}_{pass_val}_{cont_val}_*".replace("**", "*"))
             elif prod == 'Raster':
-                patterns.append(f"*_{sub}_{cycle_val}_{pass_val}_{tile_val}_*".replace("**", "*"))
+                scene_codes = _raster_scene_codes(tile_val) if tile_val != "*" else ["*"]
+                for scene in scene_codes:
+                    patterns.append(f"*_{sub}_*_{cycle_val}_{pass_val}_{scene}*".replace("**", "*"))
             elif prod == 'PIXC':
-                patterns.append(f"*_{cycle_val}_{pass_val}_{tile_val}_*".replace("**", "*"))
+                tile_codes = _pixc_tile_codes(tile_val) if tile_val != "*" else ["*"]
+                for tile in tile_codes:
+                    patterns.append(f"*_{cycle_val}_{pass_val}_{tile}*".replace("**", "*"))
 
-        if len(patterns) > 20:
+        patterns = list(OrderedDict.fromkeys(patterns))
+        if len(patterns) > MAX_GRANULE_PATTERNS:
             patterns = []
 
         base_kwargs = {
@@ -684,86 +1059,65 @@ def download_cropped():
         elif ext_orig == '.nc':
             if not NETCDF_AVAILABLE:
                 return jsonify({'error': 'NetCDF libs ausentes (xarray/rioxarray).'}), 500
-            
-            try:
-                import numpy as np
 
-                with xr.open_dataset(short_input, decode_coords="all") as ds:
+            if _is_pixc_file(real_filename):
+                pixc_out_dir = os.path.join(tmpdirname, "pixc_out")
+                os.makedirs(pixc_out_dir, exist_ok=True)
+                original_path = os.path.join(pixc_out_dir, real_filename)
+                gpkg_name = f"{os.path.splitext(real_filename)[0]}_pixel_cloud_EPSG4326.gpkg"
+                gpkg_path = os.path.join(pixc_out_dir, gpkg_name)
 
-                    if ds.rio.crs is None:
-                        ds = ds.rio.write_crs("EPSG:4326")
+                shutil.copyfile(short_input, original_path)
+                qtd_pixc = _pixc_to_geopackage(short_input, gdf_mask, mask_bounds, gpkg_path)
 
-                    try:
-                        x_dim = ds.rio.x_dim
-                        y_dim = ds.rio.y_dim
-                    except Exception:
-                        x_dim, y_dim = None, None
-
-                    dims_espaciais = {x_dim, y_dim} if x_dim and y_dim else set()
-
-                    vars_espaciais = []
-                    vars_auxiliares = []
-                    for var in ds.data_vars:
-                        if dims_espaciais and dims_espaciais.issubset(set(ds[var].dims)):
-                            vars_espaciais.append(var)
-                        else:
-                            vars_auxiliares.append(var)
-
-                    if not vars_espaciais:
-                        vars_espaciais = list(ds.data_vars)
-                        vars_auxiliares = []
-
-                    ds_espacial = ds[vars_espaciais]
-
-                    for var in ds_espacial.variables:
-                        if ds_espacial[var].dtype.kind in ['M', 'm']:
-                            ds_espacial[var].encoding.pop('_FillValue', None)
-                            ds_espacial[var].attrs.pop('_FillValue', None)
-                            ds_espacial[var].encoding.pop('missing_value', None)
-                            ds_espacial[var].attrs.pop('missing_value', None)
-                            try:
-                                ds_espacial[var].rio.write_nodata(None, encoded=True, inplace=True)
-                                ds_espacial[var].rio.write_nodata(None, inplace=True)
-                            except:
-                                pass
-
-                    try:
-                        ds_espacial = ds_espacial.rio.clip_box(
-                            minx=float(mask_bounds[0]),
-                            miny=float(mask_bounds[1]),
-                            maxx=float(mask_bounds[2]),
-                            maxy=float(mask_bounds[3])
-                        )
-                    except Exception:
-                        pass 
-
-                    clipped = ds_espacial.rio.clip(
-                        gdf_mask.geometry.values,
-                        gdf_mask.crs,
-                        drop=True,
-                        all_touched=True
+                readme_path = os.path.join(pixc_out_dir, "LEIA_ME_PIXC.txt")
+                with open(readme_path, "w", encoding="utf-8") as f:
+                    f.write(
+                        "PIXC SWOT mantido em NetCDF original e convertido para camada GIS.\n"
+                        f"- {real_filename}: arquivo original da NASA, com grupos/metadados preservados.\n"
+                        f"- {gpkg_name}: pixel_cloud em pontos georreferenciados, CRS EPSG:4326.\n"
+                        f"- Pontos na area de interesse: {qtd_pixc}\n"
                     )
 
-                    for var in vars_auxiliares:
-                        try:
-                            clipped[var] = ds[var]
-                        except Exception:
-                            pass
+                zip_base = path_final
+                shutil.make_archive(zip_base, 'zip', pixc_out_dir)
+                path_final = zip_base + ".zip"
+                mimetype = 'application/zip'
+                d_name = f"recorte_{os.path.splitext(real_filename)[0]}_PIXC.zip"
+                print(">>> PIXC empacotado com NetCDF original e GeoPackage EPSG:4326.")
+            
+            else:
+                try:
+                    clipped = _clip_netcdf_file(short_input, gdf_mask, mask_bounds)
+                    clipped = _restaurar_metadados_espaciais_netcdf(clipped)
+
+                    for var in clipped.variables:
+                        if clipped[var].dtype.kind in ['M', 'm']:
+                            clipped[var].encoding.pop('_FillValue', None)
+                            clipped[var].attrs.pop('_FillValue', None)
+                            clipped[var].encoding.pop('missing_value', None)
+                            clipped[var].attrs.pop('missing_value', None)
+                            try:
+                                clipped[var].rio.write_nodata(None, encoded=True, inplace=True)
+                                clipped[var].rio.write_nodata(None, inplace=True)
+                            except Exception:
+                                pass
 
                     path_final += ".nc"
-                    clipped.compute().to_netcdf(path_final)
+                    clipped.to_netcdf(path_final)
                     mimetype = 'application/x-netcdf'
 
-                del clipped, ds_espacial
-                gc.collect()
+                    del clipped
+                    gc.collect()
 
-            except Exception as e:
-                err_str = str(e)
-                err_type = str(type(e))
-                if "NoDataInBounds" in err_type or "No data found" in err_str:
-                    return jsonify({'status': 'no_data', 'message': 'Sem dados validos na area de interesse.'})
-                else:
-                    return jsonify({'status': 'error', 'message': f'Erro no recorte NetCDF.'})
+                except Exception as e:
+                    err_str = str(e)
+                    err_type = str(type(e))
+                    if "NoDataInBounds" in err_type or "NoDataInBounds" in err_str or "No data found" in err_str:
+                        return jsonify({'status': 'no_data', 'message': 'Sem dados validos na area de interesse.'})
+                    else:
+                        print(f">>> Erro no recorte NetCDF: {err_type} - {err_str}")
+                        return jsonify({'status': 'error', 'message': f'Erro no recorte NetCDF: {err_str}'}), 500
 
         else:
             gdf_data = gpd.read_file(short_input)
